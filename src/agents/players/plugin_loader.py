@@ -20,6 +20,11 @@ from plugins import registry  # noqa: E402
 
 GOVERNANCE = _SRC_ROOT / "governance" / "guardrails.md"
 
+# Root of the plugins tree. Resolved from _SRC_ROOT so it matches both the
+# local checkout (src/plugins) and the deployed bundle, where deploy_all.py
+# stages src/plugins as a sibling `plugins/` directory next to unified_agent.py.
+_PLUGINS_ROOT = _SRC_ROOT / "plugins"
+
 
 def load_guardrails() -> str:
     """Return the fixed game guardrails that prefix every system prompt."""
@@ -40,14 +45,19 @@ def load_skill_prompt(strategy: str, position_label: str, player_id: int) -> str
     strategies = registry.strategies()
     meta = strategies.get(strategy)
     if meta is None:
-        meta = strategies[DEFAULT_STRATEGY]
+        resolved_strategy = DEFAULT_STRATEGY
         formation = DEFAULT_FORMATION
     else:
+        resolved_strategy = strategy
         formation = meta.formation
 
-    position_file = meta.path / f"{position_label.lower()}.md"
+    # Position prose lives in the POSITION folder, grouped by strategy name:
+    # plugins/<position>/<strategy>.md. meta.path now points at plugins/
+    # strategies/, so it is NOT used to locate the body. Unknown position
+    # falls back to MID.
+    position_file = _PLUGINS_ROOT / position_label.lower() / f"{resolved_strategy}.md"
     if not position_file.is_file():
-        position_file = meta.path / "mid.md"
+        position_file = _PLUGINS_ROOT / "mid" / f"{resolved_strategy}.md"
 
     template = position_file.read_text(encoding="utf-8")
     return (

@@ -1,10 +1,13 @@
 """OFFLINE strategy discovery + validation.
 
 Given a target name, an injected research callable proposes a full strategy
-spec (``skill.md`` + the five position files). The spec is validated hard —
-structure, frontmatter, name safety, non-collision, and content safety — then
-staged to an OS-temp directory and moved into ``src/plugins/<name>/`` ONLY on
-full success. On any failure nothing is written and the process exits non-zero.
+spec (``strategy.md`` metadata + the five position bodies). The spec is
+validated hard — structure, frontmatter, name safety, non-collision, and
+content safety — then staged to an OS-temp directory and landed into the
+position-grouped layout ONLY on full success: the metadata file goes to
+``src/plugins/strategies/<name>.md`` and each position body goes to
+``src/plugins/<position>/<name>.md``. On any failure nothing is written and the
+process exits non-zero.
 
 This module is a TOOL, run on demand to grow the strategy library. It is NEVER
 imported by the runtime agent (``unified_agent`` must not import it): browsing
@@ -35,8 +38,15 @@ import constants  # noqa: E402
 from parsing import VALID_COMMANDS  # noqa: E402
 from plugins import registry  # noqa: E402
 
-# The six files every strategy folder must contain.
-REQUIRED_FILES = ("skill.md", "gk.md", "def.md", "mid.md", "fwd1.md", "fwd2.md")
+# The five positions a strategy supplies a body for.
+POSITIONS = ("gk", "def", "mid", "fwd1", "fwd2")
+
+# The metadata file key in a research spec (frontmatter only: name/type/
+# formation/description). Lands at plugins/strategies/<name>.md.
+METADATA_FILE = "strategy.md"
+
+# The files every strategy spec must contain: one metadata file + five bodies.
+REQUIRED_FILES = (METADATA_FILE,) + tuple(f"{p}.md" for p in POSITIONS)
 
 # The deterministic tactical tools a strategy prompt may name (game-domain.md).
 TACTICAL_TOOLS = (
@@ -110,8 +120,8 @@ def _validate_frontmatter(skill_bytes: str, name: str) -> list[str]:
         errors.append(
             f"frontmatter name {fm.get('name')!r} != requested {name!r}"
         )
-    if fm.get("type") != "skill":
-        errors.append(f"frontmatter type must be 'skill', got {fm.get('type')!r}")
+    if fm.get("type") != "strategy":
+        errors.append(f"frontmatter type must be 'strategy', got {fm.get('type')!r}")
     if not (fm.get("description") or "").strip():
         errors.append("frontmatter description is empty")
     formation = fm.get("formation")
@@ -186,10 +196,10 @@ def validate(name: str, files: dict[str, str], existing: dict) -> list[str]:
     if extra:
         errors.append(f"unexpected extra files: {sorted(extra)}")
 
-    if "skill.md" in files:
-        errors += _validate_frontmatter(files["skill.md"], name)
+    if METADATA_FILE in files:
+        errors += _validate_frontmatter(files[METADATA_FILE], name)
 
-    for label in ("gk", "def", "mid", "fwd1", "fwd2"):
+    for label in POSITIONS:
         fname = f"{label}.md"
         if fname in files:
             errors += _validate_content_safety(fname, files[fname])
@@ -197,22 +207,37 @@ def validate(name: str, files: dict[str, str], existing: dict) -> list[str]:
     return errors
 
 
+def _target_paths(base: Path, name: str) -> dict[str, Path]:
+    """Map each spec file to its final position-grouped destination.
+
+    ``strategy.md`` -> base/strategies/<name>.md
+    ``<pos>.md``    -> base/<pos>/<name>.md
+    """
+    paths = {METADATA_FILE: base / "strategies" / f"{name}.md"}
+    for pos in POSITIONS:
+        paths[f"{pos}.md"] = base / pos / f"{name}.md"
+    return paths
+
+
 def generate(name: str, research, plugins_dir: Path | None = None) -> Path:
-    """Produce, validate, and land a new strategy folder.
+    """Produce, validate, and land a new strategy in the position-grouped layout.
 
     Args:
-        name: the target strategy name (also the folder name).
-        research: a callable ``name -> {filename: content}`` producing the spec.
+        name: the target strategy name (also the per-file stem in each folder).
+        research: a callable ``name -> {filename: content}`` producing the spec
+            (``strategy.md`` metadata + ``gk/def/mid/fwd1/fwd2.md`` bodies).
             Injected so the whole flow is offline-testable; the default (built
             only in ``main()``) uses a web-search/Strands agent.
-        plugins_dir: where strategies live and where the folder is written.
-            Defaults to the real src/plugins directory.
+        plugins_dir: the plugins root where strategies/ and the position folders
+            live. Defaults to the real src/plugins directory.
 
     Returns:
-        The Path of the written strategy folder on success.
+        The Path of the written strategy metadata file
+        (``plugins/strategies/<name>.md``) on success.
 
     Raises:
-        SpecError: if the spec fails any validation. Nothing is written.
+        SpecError: if the spec fails any validation, or any destination already
+            exists. Nothing is written on failure.
     """
     base = plugins_dir or registry.PLUGINS_DIR
     existing = registry.strategies(plugins_dir=base)
@@ -223,30 +248,36 @@ def generate(name: str, research, plugins_dir: Path | None = None) -> Path:
     if errors:
         raise SpecError("; ".join(errors))
 
-    dest = base / name
-    if dest.exists():
-        raise SpecError(f"destination already exists: {dest}")
+    targets = _target_paths(base, name)
+    for dest in targets.values():
+        if dest.exists():
+            raise SpecError(f"destination already exists: {dest}")
 
-    # Stage to an OS-temp dir first; only move on full success so a partial
-    # write never lands in the repo.
+    # Stage to an OS-temp dir first; only move each file into place on full
+    # success so a partial write never lands in the repo.
     staging_root = Path(tempfile.mkdtemp(prefix="discover_strategy_"))
     try:
-        staged = staging_root / name
-        staged.mkdir()
+        # Re-validate the staged metadata on disk via the registry (defence in
+        # depth: the file we are about to publish must parse as a strategy).
+        staged_meta_dir = staging_root / "strategies"
+        staged_meta_dir.mkdir()
+        staged_meta = staged_meta_dir / f"{name}.md"
+        staged_meta.write_text(files[METADATA_FILE], encoding="utf-8")
+        meta = registry._meta_from_frontmatter(staged_meta, name)
+        if meta.type != "strategy" or meta.name != name:
+            raise SpecError("staged metadata failed to parse as a strategy")
+
+        # Stage every file flat, then move each to its position-grouped home.
         for fname in REQUIRED_FILES:
-            (staged / fname).write_text(files[fname], encoding="utf-8")
+            (staging_root / fname).write_text(files[fname], encoding="utf-8")
 
-        # Re-validate the staged bytes on disk via the registry (defence in
-        # depth: the folder we are about to publish must parse as a strategy).
-        meta = registry._load_meta(staged)
-        if meta is None or meta.type != "skill" or meta.name != name:
-            raise SpecError("staged folder failed to parse as a strategy")
-
-        shutil.move(str(staged), str(dest))
+        for fname, dest in targets.items():
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(staging_root / fname), str(dest))
     finally:
         shutil.rmtree(staging_root, ignore_errors=True)
 
-    return dest
+    return targets[METADATA_FILE]
 
 
 def _default_research(name: str) -> dict[str, str]:  # pragma: no cover
@@ -264,9 +295,10 @@ def _default_research(name: str) -> dict[str, str]:  # pragma: no cover
         tools=[http_request],
         system_prompt=(
             "You research football tactics and emit a strategy spec as six files "
-            "(skill.md + gk/def/mid/fwd1/fwd2.md). skill.md needs flat frontmatter "
-            "name/type/formation/description. Position files must reference only "
-            "valid commands and end with a JSON-array response line."
+            "(strategy.md + gk/def/mid/fwd1/fwd2.md). strategy.md needs flat "
+            "frontmatter name/type(=strategy)/formation/description. Position "
+            "files must reference only valid commands and end with a JSON-array "
+            "response line."
         ),
     )
     raise NotImplementedError(
