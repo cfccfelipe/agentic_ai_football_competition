@@ -135,6 +135,27 @@ guess with real math:
 Source of truth: pure functions in `src/plugins/general/scripts/`; the Lambda wrappers in
 `src/agents/players/gateway_tools/` are thin adapters, not logic.
 
+## Debugging behavior — diagnose at TWO levels
+
+When a behavior looks wrong (bad pressing, missed shots, players out of position), always
+separate the cause into two levels before fixing — they have different fix layers:
+
+1. **STRATEGY level — did we pick the right strategy/formation?** Was the planner's choice
+   (`balanced`/`aggressive`/`defensive` + its formation) correct for the scoreline / clock /
+   possession? A wrong pick (e.g. near-constant aggressive, defensive too early, a
+   forward-heavy shape that leaves the back thin) is a STRATEGY failure → fix the
+   `strategies/<name>.md` descriptions and/or the planner selection logic.
+2. **EXECUTION level — given the chosen strategy, was the per-tick execution adequate?**
+   Right command, target, zone, aim, attack/defend phase, MY-vs-OPP? A good strategy
+   executed badly (pressed constantly, declined a close shot, drifted out of zone, passed
+   blind) is an EXECUTION failure → fix the per-position skill body
+   (`plugins/<pos>/<strategy>.md`), the `tool_catalog.md` guidance, tool usage, and/or the
+   deterministic `src/commons/fallback.py` when the fallback is the one executing.
+
+Always also attribute execution to **LLM vs FALLBACK**: if the model's output failed to
+parse, the deterministic fallback ran instead, so the bad behavior may be the fallback's,
+not the prompt's. Fix the layer that is actually producing the behavior.
+
 ## Model Policy
 - Nova Micro (`us.amazon.nova-micro-v1:0`) for ALL agents and the planner until capacity
   for larger models is confirmed. Single source of truth: `src/agents/players/constants.py`
