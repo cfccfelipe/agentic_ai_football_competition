@@ -16,6 +16,7 @@ import os
 import sys
 
 # --- commons/ bootstrap (shared kernel: state, parsing, fallback, agent_base, _bootstrap) ---
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "commons"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "commons"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "commons"))
 from _bootstrap import setup_commons_path  # noqa: E402
