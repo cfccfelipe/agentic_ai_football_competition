@@ -1,103 +1,88 @@
-# Review — fix/trace-driven-tactics (trace-driven tactics fix)
+# Review — feat/dynamic-roles (final consolidation)
 
-Scope reviewed: `git diff feat/unified-agent-architecture...fix/trace-driven-tactics`.
-Changed files (19): `.agents/tasks/plan.md`, `src/commons/fallback.py`, 15 ×
-`src/plugins/<pos>/<strategy>.md`, and two new test files
-(`tests/test_prompt_examples_parse.py`, `tests/test_fallback_shoot_aim.py`).
+Diff reviewed: `feat/unified-agent-architecture..feat/dynamic-roles` (57 files, +1581/-739).
+Recorded verification evidence (commit `7e0c40f3`): `uv run pytest -q => 265 passed`
+(baseline 202 + fwd-collapse parametrization + new tests). Evidence read, not re-run per
+the step instructions. No articulable doubt justified a spot-check beyond the targeted
+reads below.
 
-## Verdict: APPROVED
+Verdict: **APPROVED** — no blocking findings.
 
-No blocking findings. P0 genuinely parses (independently verified), the hard gate is met,
-P1 is implemented and tested, P2–P5 are satisfied (prose already present / audit confirmed),
-and every hard constraint holds.
+## Gate-by-gate evidence
 
----
+**Gate 1 — A1/P1b tool-registration fix.** `runtime_guards.wrap_tool_with_timeout` now
+produces a real Strands `AgentTool` subclass (`_TimeoutAgentTool`) when the base is
+importable, delegating `tool_name`/`tool_spec`/`tool_type` to the wrapped tool and bounding
+the async `stream` with `asyncio.wait_for(self._timeout)`, yielding a benign `ToolResultEvent`
+error on timeout; it falls back to the legacy proxy only offline. `tests/test_runtime_guards.py`
+installs a faithful abstract `AgentTool`+`ToolResultEvent` and asserts `isinstance(wrapped,
+AgentTool)`, an accepted `tool_spec` (`name`+`inputSchema`), fast stream-through, and a slow
+tool timing out benignly (`status=="error"`, prompt return). The 3.5s tick cap
+(`TICK_TIMEOUT_SECONDS=3.5` via `asyncio.wait_for` in `unified_agent.invoke`) and
+`MAX_TOOL_ITERATIONS=2` (threaded as `limits={"turns":...}`) are preserved; `test_e2e_tick`
+exercises the real wrap path and asserts a tool is offered and used.
 
-## P0 — HARD GATE (independently verified: PASS)
+**Gate 2 — Schema discipline (A2/P1) in all 4 role bodies × 3 strategies.** Every body
+carries a "Command schema (use THESE parameter keys ONLY)" block with correct worked keys and
+an explicit FORBIDDEN list: PASS `target_player_id`+`type` (forbids targetId/passType/power/
+target_x), MOVE_TO `target_x`/`target_y` (forbids x/y), GK_DISTRIBUTE `method` THROW/KICK
+(forbids method:PASS). Confirmed in `fwd/aggressive.md`, `def/balanced.md`, `gk/aggressive.md`,
+`mid/balanced.md`. `parsing.py` is NOT in the diff — accepted keys unchanged.
 
-Narrow spot-check performed directly from the worktree, not trusting the commit alone:
+**Gate 3 — 4-role collapse (B0).** `src/plugins` now holds only `gk/def/mid/fwd` role folders
+(+`general` tools, `strategies` frontmatter); `fwd1`/`fwd2` folders are gone. `fwd/` is a single
+generic forward body referencing "opponent goal at x=X" and spread/pick-a-lane for 1–3 forwards.
+`plugin_loader.load_skill_prompt` resolves via `constants.role_folder` (FWD/FWD1/FWD2→`fwd`);
+`discover_strategy.POSITIONS=("gk","def","mid","fwd")`; registry/fixtures/e2e updated.
+`test_drop_strategy_zero_code.py` asserts a brand-new strategy is selectable + loadable for all
+four roles with zero Python change. Residual `fwd1`/`fwd2` strings are all intentional
+(transition aliases in constants/fallback/unified_agent, the `ai-fwd1`/`ai-fwd2` runtime dirs the
+plan keeps, and the off-limits `guardrails.md`).
 
-- `git grep "{{"` over `src/plugins/*/*.md` → **no matches** (exit 1). No body retains a
-  doubled brace on any line, Example or otherwise.
-- Rendered **all 15** position × strategy combos via
-  `plugin_loader.load_skill_prompt(strategy, position, player_id)` and asserted, for each:
-  no `{{`/`}}` anywhere in the rendered body, no leftover `{player_id}`/`{formation}`, and
-  `json.loads` of the extracted `Example:` array yields a 1-element list whose single
-  object has `playerId == sample id`. Result: `ALL 15 RENDERS OK; strategies=
-  ('aggressive','balanced','defensive')`.
-- The new guard `tests/test_prompt_examples_parse.py` is a real guard: it parametrizes all
-  5 positions × `plugin_loader.strategy_names()`, strips the `Example:` prefix, and asserts
-  (a) no `{{`/`}}`, (b) no unreplaced placeholders, (c) `json.loads` → single command whose
-  `commandType ∈ VALID_COMMANDS`, int `playerId == sample`, dict `parameters`. It fails on
-  the old doubled-brace templates and passes now. Ran it: 15 cases green.
+**Gate 4 — Dynamic roles (B1).** New `formation_roles.py` (pure `formation_roles(formation,
+flex)`) hard-pins `0→GK`, `1→DEF` for every formation and both flag states; players 2/3/4 take
+the formation's remaining DEF→MID→FWD fill (flag OFF) and are marked flexible via `is_flexible`
+(flag ON) while never becoming GK. `unified_agent.invoke` resolves the per-tick role from it
+(+player_id+formation+flex) and composes `plugins/<role>/<strategy>.md`, appending a flex prompt
+for 2/3/4 when ON. `test_formation_roles.py` asserts the 0=GK/1=DEF invariant under both flags
+for every `ALLOWED_FORMATIONS`, the exact flag-OFF table, the 4-role set, flag-ON flexibility,
+and `formation_roles.py ∈ SHARED_MODULES`. `deploy_all.SHARED_MODULES` includes it.
 
-The single-brace rewrite is applied consistently to all 15 Example lines while keeping the
-single-token `{player_id}`/`{formation}` placeholders intact — matching the loader's
-`str.replace` behavior. P0 hard gate satisfied.
+**Gate 5 — Planner model split (B2).** Execution stays `MODEL_ID` (Nova Micro).
+`constants.planner_model_id()`/`planner_model_kwargs()` resolve `PLANNER_MODEL_ID` from env,
+defaulting to `MODEL_ID` so deploy never breaks. `planner._default_agent` builds from
+`planner_model_kwargs()`; `select_strategy` keeps `call_with_timeout(..., TICK_TIMEOUT_SECONDS)`
+and the rule fallback. `test_constants.py` + `test_planner.py` cover default, env override,
+kwargs source, and `_default_agent` using the planner kwargs. Documented in `.env.example`.
 
-## P1 — Shooting (PASS)
+**Gate 6 — Tactical fixes (B3).** `tool_catalog.md` + every body spell out numeric FORWARD/BACK
+and a hard ATTACK/DEFEND phase rule; one-presser/anti-ball-magnet ("am I the closest?"); require
+`evaluate_shot` before SHOOT (situational aim, ~18–22u) with an explicit DEF/MID shoot branch;
+require `calculate_pass_options` before PASS (most-open). `gk/*` adds the under-pressure gate
+(~8–10u), THROW/KICK only, and stays in the defensive third — the "halfway line / extra attacker"
+text is removed from `gk/aggressive.md`. `fallback.py`: DEF now `SHOOT_OR_PASS` (shoots when
+within `shoot_threshold=22`, else builds out, never to GK via `pass_exclude_ids=[0]`), GK
+distributes deep with THROW. `test_fallback_shoot_aim.py` adds DEF-shoots-close and
+DEF-builds-out-never-to-GK.
 
-- FWD1/FWD2/MID aggressive + FWD1/FWD2 balanced bodies now gate distance explicitly:
-  "only shoot when CLOSE — roughly inside 18-22 units of the opponent goal in x", keep
-  "call evaluate_shot FIRST", use the tool's recommended aim corner (not a fixed corner),
-  and removed "from any distance" / speculative-blast phrasing. aim is situational relative
-  to the opponent goal for YOUR side ("Orient first: HOME +x / AWAY -x").
-- `fallback.py`: `pick_shoot_aim(shooter_y, side)` replaces the blind constant in both
-  deterministic shoot paths (`SHOOT_OR_PASS`, `SHOOT_OR_ADVANCE`). Vertical half from
-  shooter y (y≤0 → top, y>0 → bottom), horizontal half from a per-config flank
-  (`shoot_aim_side`: FWD1=L, FWD2=R, MID=R), so aim is a function of position and the
-  attacking goal (aim_location is relative to the goal reached via `opp_goal_x`).
-  `shoot_aim` retained only as a documented last-resort default. `shoot_threshold`,
-  `shoot_power`, press/mark logic, the 3-layer fallback and `last_resort_*` fields are
-  untouched.
-- `tests/test_fallback_shoot_aim.py` covers FWD1(3)/FWD2(4)/MID(2) for **both** HOME
-  (`team_id=0`) and AWAY (`team_id=1`): asserts a valid corner, that aim flips top/bottom
-  with shooter y (situational, not constant), and that FWD1≠FWD2 flank. Ran it: 14 cases
-  green.
+**Gate 7 — Formation remap (B4/P4).** `balanced.formation=2-1-1`, `aggressive=1-1-2`,
+`defensive=2-1-1`. Descriptions are explicit that gameTime is SECONDS (~120s is early) and to
+START structured, not aggressive, at kickoff. Role `skill.md` formation references updated.
 
-## P2 — Phase + identity discipline (PASS)
+**Gate 8 — Logging flag (A3/P8).** `unified_agent` builds a `[team<id> '<name>' pos<id> <ROLE>]`
+prefix once per tick (team name from payload/gameState, falls back to `team<id>`), prepended to
+info/warn/error. `test_unified_agent_invoke.py` asserts the prefix with and without a team name.
 
-`tool_catalog.md` carries the explicit ATTACK/DEFEND rule (teammate/MY holds → ATTACK,
-opponent/OPP holds → DEFEND, loose → nearer recovers), the MY/OPP identity discipline
-(teammates 0-4, opponents 0-4, "never press or mark a teammate; never pass to an
-opponent"), and tool-first targeting (`calculate_pass_options` / `get_defensive_assignment`).
-Bodies carry matching phase cues. `summarize_state` was intentionally left without a
-`Phase:` line — the explicitly-allowed lower-risk markdown-only outcome — so no new
-untested state code was introduced. Consistent with the plan.
+**Gate 9 — Tests green / e2e intact.** Recorded `265 passed`. `test_e2e_tick.py` keeps the five
+guarantees and updates the aggressive assertion to `1-1-2`.
 
-## P3 — Command mix (PASS)
+**Gate 10 — No forbidden-path edits.** Diff name-list contains none of cdk/, node_modules,
+agentcore.json, Makefile, `.env`, ai-team-strands-balanced/, sample-ai-possibilities/, or
+guardrails.md. (`.env.example` and `docs/`/`src/eval` are editable.) Conventions preserved:
+single-brace `Example:`, `{player_id}`/`{formation}` tokens, single-JSON-array `## Response`,
+strategy frontmatter, caps + 3-layer fallback.
 
-Bodies express possession-first/purposeful-press ("prefer forward/through balls via
-calculate_pass_options", "a quick calculate_pass_options one-two … is better than a blind
-blast"); no new aggressive-press language was added. Audit-only, no regression.
-
-## P4 — Strategy/formation mix (PASS)
-
-Audit only; no `planner.py` or strategy-description edit in the diff. Commit evidence states
-level/early → balanced is already covered (`diff==0` → `DEFAULT_STRATEGY`,
-`test_rule_early_level_is_balanced`). `planner.py` is unchanged, and the full suite
-(including `test_planner.py` and `test_e2e_tick.py`) is green, so no regression.
-
-## P5 — Housekeeping (PASS)
-
-`git grep` for `CARRY_FORWARD|DRIBBLE|TACKLE_BALL|SHOOT_GOAL` across plugin bodies and
-`tool_catalog.md` → no matches. Only valid command types appear in prompt text/examples.
-`KICK`/`THROW` are `GK_DISTRIBUTE` method values, not commands.
-
-## Hard constraints (all hold)
-
-- Diff `--stat` shows no edits under `cdk/`, `node_modules/`, `agentcore.json`, `Makefile`,
-  `.env`, `guardrails.md`, `ai-team-strands-balanced/`, or `sample-ai-possibilities/`.
-- Only runtime `.py` touched is `src/commons/fallback.py` (ships as a folder → no
-  `SHARED_MODULES` change needed, and none made). `deploy_all.py`, `planner.py`,
-  `state.py`, `unified_agent.py`, `plugin_loader.py`, `constants.py` untouched. No new
-  `players/` module added.
-- `{player_id}`/`{formation}` tokens preserved; single-JSON-array `## Response` contract
-  intact in all 15 bodies; strategy frontmatter and position skill types untouched; 3-layer
-  fallback + caps preserved; `test_e2e_tick.py` green.
-
-## Verification evidence
-
-- Commit records `uv run pytest -q → 202 passed` (173 + 15 + 14). Re-ran the full suite
-  from the worktree: **202 passed in ~13s**. Re-ran the two guard files: **29 passed**.
-  Independent P0 render check: all 15 OK, no leftover braces/placeholders, valid JSON.
+## Notes (non-blocking, no action required)
+- `constants.position_for(3)`/`(4)` now return `"FWD"` (not FWD1/FWD2); the FWD1/FWD2 aliases in
+  `FALLBACK_CONFIGS`/`role_folder` keep any id-3/4 caller resolving a config/body. Intentional
+  transition shim, consistent with the plan.
