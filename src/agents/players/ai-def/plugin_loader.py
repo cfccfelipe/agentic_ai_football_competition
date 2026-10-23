@@ -1,0 +1,153 @@
+"""Composes the final system prompt from governance guardrails + the selected
+strategy's position file.
+
+Single Responsibility: this module only *reads and composes text*. It does not
+decide the strategy (planner does) and does not know about Strands or AgentCore.
+It leans on plugins.registry for discovery so it never hard-codes plugin names.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+_HERE = Path(__file__).resolve().parent
+
+
+def _resolve_dir(name: str) -> Path:
+    """Locate a staged resource dir (governance/, plugins/) across layouts.
+
+    deploy_all.py stages these as SIBLINGS of this file in the deployed bundle
+    (/var/task/<name>), while the local checkout has them under src/ (two
+    levels up: src/agents/players -> src/<name>). Try the deployed sibling
+    FIRST, then the local-checkout location. Returns the first existing dir,
+    falling back to the sibling path (so a clear FileNotFoundError naming the
+    bundle-relative path surfaces at init if staging is wrong).
+    """
+    sibling = _HERE / name                       # /var/task/<name>  (deployed bundle)
+    src_level = _HERE.parents[1] / name          # src/<name>        (local checkout)
+    for cand in (sibling, src_level):
+        if cand.is_dir():
+            return cand
+    return sibling
+
+
+# src/ root (local) or bundle root (deployed), so `from plugins import registry` resolves.
+_SRC_ROOT = _HERE.parents[1] if (_HERE.parents[1] / "plugins").is_dir() else _HERE
+if str(_SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(_SRC_ROOT))
+
+from plugins import registry  # noqa: E402
+
+_GOVERNANCE_DIR = _resolve_dir("governance")
+GOVERNANCE = _GOVERNANCE_DIR / "guardrails.md"
+TOOL_CATALOG = _GOVERNANCE_DIR / "tool_catalog.md"
+
+# Root of the plugins tree — sibling in the deployed bundle, src/plugins locally.
+_PLUGINS_ROOT = _resolve_dir("plugins")
+
+
+def load_guardrails() -> str:
+    """Return the fixed game guardrails that prefix every system prompt."""
+    return GOVERNANCE.read_text(encoding="utf-8")
+
+
+def load_tool_catalog() -> str:
+    """Return the static tactical-tool catalog (names + when-to-use triggers).
+
+    Ships inside the deployed bundle's governance/ folder, same as guardrails.
+    A missing file raises FileNotFoundError at build time — a packaging error
+    that must surface loudly at process init, never silently mid-match.
+    """
+    return TOOL_CATALOG.read_text(encoding="utf-8")
+
+
+def build_static_base() -> str:
+    """The STATIC system-prompt base, built once per agent and cached.
+
+    guardrails (fixed rules) + the tactical-tool catalog. It is strategy- and
+    position-agnostic, so it never changes across ticks and is composed once at
+    register() time, not per tick.
+    """
+    return f"{load_guardrails()}\n\n---\n\n{load_tool_catalog()}"
+
+
+def load_skill_prompt(strategy: str, position_label: str, player_id: int) -> str:
+    """Return the position prompt for a strategy, with {player_id} and
+    {formation} resolved.
+
+    Falls back to the default strategy if the requested one is unknown, and to
+    MID if the position file is missing — never raises on a bad tag. When the
+    requested strategy is unknown the formation is DEFAULT_FORMATION (the
+    position text still comes from the default strategy's files).
+    """
+    from constants import DEFAULT_FORMATION, DEFAULT_STRATEGY
+
+    strategies = registry.strategies()
+    meta = strategies.get(strategy)
+    if meta is None:
+        resolved_strategy = DEFAULT_STRATEGY
+        formation = DEFAULT_FORMATION
+    else:
+        resolved_strategy = strategy
+        formation = meta.formation
+
+    # Role prose lives in the ROLE folder, grouped by strategy name:
+    # plugins/<role>/<strategy>.md. The role label maps to its folder via
+    # constants.role_folder so FWD/FWD1/FWD2 all resolve to plugins/fwd/.
+    # meta.path now points at plugins/strategies/, so it is NOT used to locate
+    # the body. Unknown role falls back to MID.
+    from constants import role_folder
+
+    position_file = _PLUGINS_ROOT / role_folder(position_label) / f"{resolved_strategy}.md"
+    if not position_file.is_file():
+        position_file = _PLUGINS_ROOT / "mid" / f"{resolved_strategy}.md"
+
+    template = position_file.read_text(encoding="utf-8")
+    return (
+        template
+        .replace("{player_id}", str(player_id))
+        .replace("{formation}", formation)
+    )
+
+
+def compose_tick_prompt(
+    static_base: str, strategy: str, position_label: str, player_id: int
+) -> str:
+    """Per-tick composition: the cached STATIC base + the DYNAMIC strategy body.
+
+    Called once per tick AFTER the strategy is confirmed. One string join over
+    an already-cached base plus a local skill-file read — no network.
+    """
+    skill = load_skill_prompt(strategy, position_label, player_id)
+    return f"{static_base}\n\n---\n\n{skill}"
+
+
+def build_system_prompt(strategy: str, position_label: str, player_id: int) -> str:
+    """static base (guardrails + tool catalog) + the strategy/position prompt.
+
+    Thin wrapper retained for tests / one-shot callers. The hot path builds the
+    static base once at register() and calls compose_tick_prompt() directly.
+    """
+    return compose_tick_prompt(
+        build_static_base(), strategy, position_label, player_id
+    )
+
+
+def strategy_descriptions() -> str:
+    """Return the strategy descriptions block for the planner to read."""
+    return registry.strategy_descriptions()
+
+
+def strategy_names() -> tuple[str, ...]:
+    """Return the discovered strategy names (the planner's selectable set)."""
+    return tuple(registry.strategies().keys())
+
+
+def strategy_meta(strategy: str):
+    """Return the SkillMeta for a strategy (for its formation), or None.
+
+    Thin pass-through to the registry so the runtime can resolve a strategy's
+    formation (used by formation_roles) without importing the registry directly.
+    """
+    return registry.strategies().get(strategy)

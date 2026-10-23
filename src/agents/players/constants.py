@@ -8,7 +8,7 @@ import os
 
 # Model used by every EXECUTION agent (per-tick command). Nova Micro: fast + cheap,
 # which matters because every player runs it ~every 2s under a 5s decision window.
-MODEL_ID = "us.amazon.nova-micro-v1:0"
+MODEL_ID = "us.amazon.nova-2-lite-v1:0"
 
 
 def planner_model_id() -> str:
@@ -147,7 +147,7 @@ ALLOWED_FORMATIONS = (
 )
 
 # Formation used when a strategy declares none (balanced, staggered).
-DEFAULT_FORMATION = "1-1-1-1"
+DEFAULT_FORMATION = "1-1-1-2"
 
 
 def position_for(player_id: int) -> str:

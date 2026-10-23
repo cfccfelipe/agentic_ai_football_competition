@@ -1,0 +1,13 @@
+# Canonical runtime deps for every unified agent (all 5 positions share this).
+# deploy_all.py stages a copy into each agent bundle at deploy time — AgentCore's
+# CodeZip build needs a requirements.txt at each codeLocation root.
+#
+# Aligned with the working gateway sample (Python 3.10). The OTEL distro MUST be
+# present so AgentCore can find the opentelemetry-instrument executable in the ZIP.
+strands-agents>=1.13.0
+strands-agents-tools>=0.1.0
+bedrock-agentcore>=1.0.3
+bedrock-agentcore-starter-toolkit>=0.3.2
+mcp>=1.9.0,<2
+# OTEL instrumentation for observability (required by the runtime bundle)
+aws-opentelemetry-distro>=0.10.0
