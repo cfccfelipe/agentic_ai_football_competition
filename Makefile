@@ -1,4 +1,4 @@
-.PHONY: setup setup-python setup-node setup-cli setup-make test test-mcp eval deploy destroy monitoring doctor
+.PHONY: setup setup-python setup-node setup-cli setup-make test test-mcp eval deploy destroy monitoring observability doctor
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PATH injection — GNU Make on Windows launches cmd.exe with a stripped PATH
@@ -78,4 +78,11 @@ destroy:
 # One-time per account/region: enable CloudWatch Transaction Search so agent
 # traces/spans become visible and searchable.
 monitoring:
-	uv run python src/observability/observability.py
+	uv run python observability/observability.py
+
+# Read-only diagnosis: is Transaction Search ACTIVE, which runtime log groups
+# exist, did any of them actually emit telemetry, and what are the most recent
+# log lines (incl. init errors) for a chosen runtime. Loads AWS creds from .env.
+# Usage: `make observability`  or  `make observability RT=ai_gk`
+observability:
+	uv run python observability/check_observability.py $(RT)

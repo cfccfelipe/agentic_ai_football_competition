@@ -34,6 +34,17 @@ fileMatchPattern: '**/{deploy_all,destroy_all}.py|Makefile|.env*|**/agentcore.js
   `requirements.txt`) — all FLAT at the bundle root (`/var/task/` at runtime). So in the
   deployed bundle `unified_agent.py` and `commons/` are SIBLINGS, not parent/child. Any
   path/bootstrap logic must resolve `commons` as a sibling (`./commons`), not `../commons`.
+- **CRITICAL deploy contract — every runtime module in `src/agents/players/` that is
+  imported at runtime MUST be listed in `deploy_all.py`'s `SHARED_MODULES`.** Only the files
+  in that list are copied into each agent bundle. A NEW module (e.g. `runtime_guards.py` from
+  the loop/timeout work) that is imported by `unified_agent.py`/`planner.py` but NOT added to
+  `SHARED_MODULES` deploys a broken bundle: it passes all LOCAL tests (local resolves the
+  whole `players/` dir) but crashes the deployed runtime at import with
+  `ModuleNotFoundError: No module named '<that module>'`, which shows up as "Runtime
+  initialization time exceeded" / a silent runtime. When you add a runtime module under
+  `players/`, add it to `SHARED_MODULES` in the SAME change. Modules under `src/commons/` are
+  fine — the whole `commons/` folder is staged. Current SHARED_MODULES: constants, planner,
+  plugin_loader, unified_agent, runtime_guards.
 
 ## Deferred / tech debt (do NOT do mid-fix — pick up after the game is stable)
 - **Move infra to its own folder.** `deploy_all.py`, `destroy_all.py`, and `agentcore/`

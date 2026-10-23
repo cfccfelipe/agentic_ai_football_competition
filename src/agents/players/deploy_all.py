@@ -63,7 +63,7 @@ GOVERNANCE_SRC = SRC_ROOT / "governance"
 SCRIPTS_SRC = PLUGINS_SRC / "general" / "scripts"      # pure tool functions
 GATEWAY_TOOLS = SCRIPT_DIR / "gateway_tools"           # Lambda wrappers
 REQUIREMENTS_SRC = SCRIPT_DIR / "requirements.txt"     # canonical runtime deps
-SHARED_MODULES = ["constants.py", "planner.py", "plugin_loader.py", "unified_agent.py"]
+SHARED_MODULES = ["constants.py", "planner.py", "plugin_loader.py", "unified_agent.py", "runtime_guards.py"]
 ALL_AGENTS = ["ai-gk", "ai-def", "ai-mid", "ai-fwd1", "ai-fwd2"]
 
 _injected: list[Path] = []
