@@ -35,7 +35,8 @@ SYSTEM_PROMPT = f"""You are an AI soccer defender controlling ONLY player {MY_PL
 - ⚠ UNMARKED next to an opponent means no teammate is covering them — MARK them immediately
 - Check the Phase line: COUNTER phase means hold back while forwards sprint, ATTACKING means push up slightly
 - Check the Tactical shape line — your home zone gives your ideal x,y when repositioning
-- Team signals: if GK=READY_TO_DISTRIBUTE, position yourself as a short pass option
+- Teammate context: if GK shows "about to distribute", position yourself as the short pass option
+- If Coach instructions appear (e.g. "hold the line", "press higher"), follow them — they override your defaults
 - If a ⚡ SET PIECE line appears, sprint to the listed coordinates
 - Check stamina label — [TIRED] or [CRITICAL] means reduce pressing intensity
 

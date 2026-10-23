@@ -6,7 +6,7 @@ the LLM prompt automatically:
   - threat      : per-opponent threat score so DEF/GK can prioritise
   - set_pieces  : position overrides + instruction during set pieces
   - stamina     : contextualised stamina label relative to game time
-  - coordination: teamChat signals from other agents
+  - coordination: coach instructions (teamChat) + inferred teammate intent from positions
   - tactics     : dynamic formation home-zone per player based on score/time
 """
 
@@ -203,10 +203,15 @@ def summarize_state(
         format_threats_for_prompt = None   # type: ignore[assignment]
 
     try:
-        from coordination import read_intents, format_intents_for_prompt
+        from coordination import (
+            read_coach_instructions,
+            infer_teammate_context,
+            format_coordination_for_prompt,
+        )
     except ImportError:
-        read_intents = None              # type: ignore[assignment]
-        format_intents_for_prompt = None # type: ignore[assignment]
+        read_coach_instructions = None        # type: ignore[assignment]
+        infer_teammate_context = None         # type: ignore[assignment]
+        format_coordination_for_prompt = None # type: ignore[assignment]
 
     ball      = game_state.get("ball", {})
     ball_pos  = ball.get("position", {"x": 0, "y": 0})
@@ -302,11 +307,11 @@ def summarize_state(
         )
         lines.append(f"  {role}(id={pid}): ({pos.get('x',0):.1f},{pos.get('y',0):.1f}){extra}")
 
-    # ---- Skill 6: Coordination signals ---------------------------------------
-    if read_intents and format_intents_for_prompt:
-        intents      = read_intents(game_state, team_id)
-        intents_line = format_intents_for_prompt(intents, my_player_id)  # type: ignore[misc]
-        lines.append(intents_line)
+    # ---- Skill 6: Coach instructions + inferred teammate context -----------
+    if read_coach_instructions and infer_teammate_context and format_coordination_for_prompt:
+        coach_msgs    = read_coach_instructions(game_state, team_id)
+        teammate_ctx  = infer_teammate_context(game_state, team_id, my_player_id)
+        lines.append(format_coordination_for_prompt(coach_msgs, teammate_ctx))  # type: ignore[misc]
 
     lines.append("")
 

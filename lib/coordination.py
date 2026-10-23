@@ -1,70 +1,44 @@
-"""Inter-agent coordination via the teamChat field.
+"""Coordination context for AI soccer agents.
 
-The game state already exposes a `teamChat` list.  Currently all five agents
-leave it empty, so there is zero coordination between positions.  This module
-gives each agent a lightweight broadcast/read API so they can signal intent
-once per tick.
+There is NO agent-to-agent communication channel in this platform.
+Each agent runs in an isolated invocation and cannot write messages
+to its teammates.
 
-Signal vocabulary
------------------
-Keeping the vocabulary small and uppercase avoids ambiguity and reduces the
-chance the LLM confuses a signal with an ordinary word.
+Two legitimate coordination sources are used instead:
 
-  MAKING_RUN_LEFT     — FWD moving toward left channel
-  MAKING_RUN_RIGHT    — FWD moving toward right channel
-  MAKING_RUN_CENTER   — FWD moving through the middle
-  HOLDING_WIDE        — player holding wide position
-  DROPPING_DEEP       — player dropping into support
-  PRESSING            — player about to press the ball carrier
-  READY_TO_DISTRIBUTE — GK/DEF ready to receive and play out
-  OPEN_FOR_PASS       — player in space, offering a passing option
-  COVERING_SPACE      — DEF covering a dangerous gap
-  SHOOTING            — player about to shoot (don't get in the way)
+1. Coach instructions  — teamChat is coach → agents (read-only for agents).
+   The coach can send natural-language tactical instructions during a match.
+   We surface these verbatim in the state summary so every agent acts on them.
 
-Design notes
-------------
-- Each agent reads all signals from the previous tick and broadcasts one for
-  the current tick.  The game server owns `teamChat` and the exact delivery
-  semantics are opaque to us, but the payload format is already present — we
-  just use it.
-- Signal injection into the state summary is a single multi-line block that
-  replaces the empty "Team signals: (none)" placeholder.
-- All signals are scoped to a team_id so HOME and AWAY agents cannot read
-  each other's chat by mistake.
+2. Inferred teammate intent  — every agent already sees the full positions,
+   velocities, and actions of all 10 players in the game state.
+   Reading that data lets an agent infer what teammates are about to do
+   without any message passing. This is how real multi-agent football works.
 
-Usage
------
-    from coordination import broadcast_intent, read_intents, format_intents_for_prompt
-
-    # In the invoke handler, before calling summarize_state:
-    broadcast_intent(game_state, team_id, player_id, "MAKING_RUN_RIGHT")
-
-    # In summarize_state (or just before building the prompt):
-    intents = read_intents(game_state, team_id)
-    prompt_line = format_intents_for_prompt(intents, my_player_id)
+Public API
+----------
+    read_coach_instructions(game_state, team_id)  → list[str]
+    infer_teammate_context(game_state, team_id, my_player_id)  → list[str]
+    format_coordination_for_prompt(...)  → str
 """
 
 from __future__ import annotations
+import math
+
+from state import (
+    get_goal_positions,
+    get_possession_info,
+    holder_is_me,
+    _is_my_team,
+    _player_idx,
+    dist,
+)
 
 # ---------------------------------------------------------------------------
-# Valid signals
+# Position labels
 # ---------------------------------------------------------------------------
 
-VALID_SIGNALS: frozenset[str] = frozenset({
-    "MAKING_RUN_LEFT",
-    "MAKING_RUN_RIGHT",
-    "MAKING_RUN_CENTER",
-    "HOLDING_WIDE",
-    "DROPPING_DEEP",
-    "PRESSING",
-    "READY_TO_DISTRIBUTE",
-    "OPEN_FOR_PASS",
-    "COVERING_SPACE",
-    "SHOOTING",
-})
-
-# Position labels for display
-_POSITION_LABELS: dict[int, str] = {
+_LABELS: dict[int, str] = {
     0: "GK",
     1: "DEF",
     2: "MID",
@@ -74,125 +48,182 @@ _POSITION_LABELS: dict[int, str] = {
 
 
 # ---------------------------------------------------------------------------
-# Public API
+# 1. Coach instructions
 # ---------------------------------------------------------------------------
 
-def broadcast_intent(
-    game_state: dict,
-    team_id: int,
-    player_id: int,
-    signal: str,
-) -> None:
-    """Append a signal to game_state['teamChat'] for the current tick.
+def read_coach_instructions(game_state: dict, team_id: int) -> list[str]:
+    """Return the coach's instructions for our team from teamChat.
 
-    This mutates the game state dict in place — the framework owns the dict
-    but the mutation only lives for this tick's invocation; it is not
-    persisted between ticks.
+    teamChat is a read-only field populated by the coach from the sideline.
+    Agents must not write to it — they only read it.
 
-    Silently ignores unknown signals to avoid cluttering the chat with noise.
+    Each entry may have the shape:
+        {"teamId": 0, "message": "Press higher in the second half"}
+    or a flat string. Both forms are handled.
+
+    Returns a list of instruction strings (empty if none).
     """
-    if signal not in VALID_SIGNALS:
-        return
+    raw = game_state.get("teamChat", [])
+    instructions: list[str] = []
 
-    chat = game_state.setdefault("teamChat", [])
-    chat.append({
-        "teamId":   team_id,
-        "playerId": player_id,
-        "signal":   signal,
-    })
-
-
-def read_intents(game_state: dict, team_id: int) -> dict[int, str]:
-    """Return the most recent signal per teammate as {player_id: signal}.
-
-    Only signals from *our* team are returned.  If a player broadcast
-    multiple signals (shouldn't happen but is defensive), the last one wins.
-    """
-    chat    = game_state.get("teamChat", [])
-    intents: dict[int, str] = {}
-    for msg in chat:
-        if msg.get("teamId") != team_id:
+    for entry in raw:
+        if isinstance(entry, str):
+            instructions.append(entry.strip())
             continue
-        pid    = msg.get("playerId")
-        signal = msg.get("signal", "")
-        if pid is not None and signal in VALID_SIGNALS:
-            intents[pid] = signal
-    return intents
-
-
-def format_intents_for_prompt(intents: dict[int, str], my_player_id: int) -> str:
-    """Return a compact line for the LLM state summary.
-
-    Excludes the current player's own signal (the LLM already decided that).
-    Example output:
-      Team signals: GK=READY_TO_DISTRIBUTE, FWD1=MAKING_RUN_RIGHT
-    """
-    parts = []
-    for pid in sorted(intents):
-        if pid == my_player_id:
+        if not isinstance(entry, dict):
             continue
-        label  = _POSITION_LABELS.get(pid, f"P{pid}")
-        signal = intents[pid]
-        parts.append(f"{label}={signal}")
+        # Filter to our team when a teamId is present
+        entry_team = entry.get("teamId")
+        if entry_team is not None and entry_team != team_id:
+            continue
+        msg = entry.get("message") or entry.get("text") or entry.get("signal") or ""
+        if isinstance(msg, str) and msg.strip():
+            instructions.append(msg.strip())
 
-    if not parts:
-        return "Team signals: (none)"
-    return "Team signals: " + ", ".join(parts)
+    return instructions
 
 
-def infer_signal(
-    position_label: str,
+# ---------------------------------------------------------------------------
+# 2. Inferred teammate context
+# ---------------------------------------------------------------------------
+
+def infer_teammate_context(
     game_state: dict,
     team_id: int,
     my_player_id: int,
-) -> str | None:
-    """Automatically pick a broadcast signal based on position and game state.
+) -> list[str]:
+    """Derive likely teammate intentions from their positions and velocities.
 
-    This is called once per tick *before* the LLM runs, so the signal is
-    available to teammates in the same tick.  The LLM itself can override
-    this by choosing a different action, but the signal lets teammates plan
-    around the *expected* behaviour.
+    No messages are passed between agents. Instead each agent reasons about
+    what its teammates are *about to do* by reading the same game state snapshot.
 
-    Returns None when no useful signal can be inferred (nothing is broadcast).
+    Returns a list of human-readable observation strings, one per relevant
+    teammate, ready to be injected into the LLM state summary.
     """
-    from state import (
-        holder_is_me, get_possession_info, _is_my_team, get_goal_positions, dist
-    )
-
     ball    = game_state.get("ball", {})
     players = game_state.get("players", [])
-    _, _, we_have = get_possession_info(ball, players, team_id)
-    i_have = holder_is_me(ball, players, team_id, my_player_id)
-    me     = next((p for p in players
-                   if p.get("agentId") == f"agentId_{my_player_id}"
-                   and _is_my_team(p, team_id)), None)
-
+    _, _, we_have_ball = get_possession_info(ball, players, team_id)
     my_goal_x, opp_goal_x = get_goal_positions(team_id)
+    ball_pos = ball.get("position", {"x": 0.0, "y": 0.0})
 
-    if position_label == "GK":
-        return "READY_TO_DISTRIBUTE" if i_have else None
+    lines: list[str] = []
 
-    if position_label == "DEF":
-        if not we_have:
-            return "COVERING_SPACE"
-        return "OPEN_FOR_PASS" if not i_have else None
+    my_players = [p for p in players if _is_my_team(p, team_id)]
 
-    if position_label == "MID":
-        if not we_have:
-            return "PRESSING"
-        return "OPEN_FOR_PASS"
+    for p in my_players:
+        pid = _player_idx(p)
+        if pid == my_player_id:
+            continue
 
-    if position_label in ("FWD1", "FWD2"):
-        if i_have:
-            # Check if we're in shooting range
-            if me:
-                pos = me.get("position", {"x": 0, "y": 0})
-                if abs(pos.get("x", 0) - opp_goal_x) < 25:
-                    return "SHOOTING"
-            return "MAKING_RUN_CENTER"
-        if we_have:
-            # Signal a run based on side
-            return "MAKING_RUN_RIGHT" if position_label == "FWD2" else "MAKING_RUN_LEFT"
-        return "PRESSING"
+        label   = _LABELS.get(pid, f"P{pid}")
+        pos     = p.get("position", {"x": 0.0, "y": 0.0})
+        vel     = p.get("velocity", {"x": 0.0, "y": 0.0})
+        stamina = p.get("stamina", 1.0)
+        is_sprinting = p.get("isSprinting", False)
 
-    return None
+        has_ball_this_player = holder_is_me(ball, players, team_id, pid)
+        d_ball   = dist(pos, ball_pos)
+        d_opgoal = abs(pos.get("x", 0) - opp_goal_x)
+
+        intent = _infer_intent(
+            pid, pos, vel, stamina, is_sprinting,
+            has_ball_this_player, d_ball, d_opgoal,
+            we_have_ball, opp_goal_x, my_goal_x,
+        )
+
+        if intent:
+            lines.append(f"  {label}(id={pid}): {intent}")
+
+    return lines
+
+
+def _infer_intent(
+    pid: int,
+    pos: dict,
+    vel: dict,
+    stamina: float,
+    is_sprinting: bool,
+    has_ball: bool,
+    d_ball: float,
+    d_opp_goal: float,
+    we_have_ball: bool,
+    opp_goal_x: float,
+    my_goal_x: float,
+) -> str:
+    """Return a short intent string for one teammate."""
+    sign = 1 if opp_goal_x > 0 else -1  # direction of attack
+    vx   = vel.get("x", 0.0)
+    vy   = vel.get("y", 0.0)
+    speed = math.sqrt(vx ** 2 + vy ** 2)
+
+    moving_toward_opp_goal = (vx * sign) > 0.5 and speed > 0.5
+    moving_toward_own_goal = (vx * sign) < -0.5 and speed > 0.5
+    in_opp_half  = (pos.get("x", 0) * sign) > 5
+    in_own_half  = not in_opp_half
+    stamina_low  = stamina < 0.45
+
+    # GK: always anchored
+    if pid == 0:
+        if has_ball:
+            return "has ball — about to distribute"
+        return "holding position in goal"
+
+    # Has the ball
+    if has_ball:
+        if d_opp_goal < 25:
+            return "in shooting range — may shoot"
+        if speed > 0.3:
+            return "dribbling — look for pass option"
+        return "on ball — waiting for run"
+
+    # We have possession
+    if we_have_ball:
+        if is_sprinting and moving_toward_opp_goal:
+            return f"making run into {'right' if vy > 1 else 'left' if vy < -1 else 'central'} channel"
+        if in_opp_half and speed < 0.3:
+            return "holding position in attacking third — available for pass"
+        if in_own_half and moving_toward_opp_goal:
+            return "carrying ball forward — support run"
+        return "positioning for pass"
+
+    # Opponent has possession
+    if not we_have_ball:
+        if d_ball < 8 and speed > 0.3:
+            return "closing down ball carrier"
+        if in_own_half and speed < 0.3:
+            return "holding defensive shape"
+        if moving_toward_own_goal:
+            return "tracking back to defend"
+        if stamina_low:
+            return "tracking back (low stamina)"
+
+    return ""
+
+
+# ---------------------------------------------------------------------------
+# 3. Format for prompt
+# ---------------------------------------------------------------------------
+
+def format_coordination_for_prompt(
+    coach_instructions: list[str],
+    teammate_context: list[str],
+) -> str:
+    """Combine coach instructions and inferred teammate context into one block."""
+    lines: list[str] = []
+
+    if coach_instructions:
+        lines.append("Coach instructions:")
+        for inst in coach_instructions:
+            lines.append(f"  ⚽ {inst}")
+    else:
+        lines.append("Coach instructions: (none)")
+
+    lines.append("")
+
+    if teammate_context:
+        lines.append("Teammate context (inferred from positions):")
+        lines.extend(teammate_context)
+    else:
+        lines.append("Teammate context: (no clear intent readable)")
+
+    return "\n".join(lines)
