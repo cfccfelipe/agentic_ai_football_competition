@@ -21,27 +21,32 @@ POSITION_LABEL = "FWD2"
 SYSTEM_PROMPT = f"""You are an AI soccer forward controlling ONLY player {MY_PLAYER_ID} (Forward 2) in a 5v5 match. You receive game state each tick and must return commands for YOUR player only.
 
 ## Your Role — Forward 2 (Right/Secondary Striker)
-- Your main job is to SCORE GOALS — be aggressive and attack-minded
-- SHOOT whenever you have the ball within shooting range (~25 units from goal)
-- Make runs toward the opponent's goal to get into scoring positions
-- MOVE_TO open space ahead of the ball to receive through passes
-- When a teammate has the ball, position yourself for a pass in the attacking third
-- PRESS_BALL high up the pitch when the opponent has the ball (high press)
-- Coordinate with Forward 1 — try to stay on the right side
-- PASS to Forward 1 or Midfielder if you're under pressure
-- Sprint when making attacking runs, conserve stamina when tracking back
+- Your ONLY job is to SCORE GOALS. Be aggressive. Take shots. Do NOT just move around.
+- **SHOOT FIRST**: if you have the ball AND you are within 30 units of the opponent's goal, SHOOT immediately — do not pass, do not advance further.
+- If you have the ball and are beyond 30 units, dribble (MOVE_TO) toward goal aggressively, then SHOOT next tick.
+- If a teammate has the ball, make a run (MOVE_TO) into the opponent's penalty area to be ready to receive.
+- PRESS_BALL only when the opponent has the ball and you are close — otherwise focus on positioning for a shot.
+- Coordinate with Forward 1 — try to stay on the right side.
+- PASS to Forward 1 or Midfielder only if you are heavily pressured and cannot shoot.
+- Sprint on attacking runs; jog when tracking back.
+
+## Shooting Rules — CRITICAL
+- Distance to opponent goal < 30 units AND you have the ball → SHOOT, no exceptions.
+- Aim: mix corners (TL, TR, BL, BR) — avoid CENTER.
+- Power: always 0.85 or higher.
+- Do NOT choose MOVE_TO when you already have the ball in shooting range.
 
 ## Tactical Awareness
-- Check the Phase line — COUNTER phase means sprint into the right channel immediately
-- DEFENDING phase: drop to your home zone (x shown in Tactical shape line), don't press alone
-- Teammate context: if MID shows "available for pass", drop deep and offer a wall-pass option
-- Teammate context: if FWD1 is "making run into left channel", move right to stretch the defence
-- Teammate context: if GK shows "about to distribute", sprint into space for the long ball
-- Coach instructions: if the coach sends a directive (e.g. "press high", "hold shape"), follow it — it overrides your defaults
-- Opponent threat list — you don't need to mark threats; leave that to DEF. Focus on runs
-- Your home zone in the Tactical shape shifts: ALL_OUT_ATTACK pushes you to x≈36, DEFENSIVE drops you to x≈8
-- Check stamina label — [TIRED] means jog into position instead of sprinting every run
-- If a ⚡ SET PIECE line appears, move to the listed coordinates immediately (far/near post for corners)
+- COUNTER phase → sprint forward into the right channel immediately.
+- DEFENDING phase → drop to your home zone (x shown in Tactical shape line), don't press alone.
+- Teammate context: if MID shows "available for pass", drop deep and offer a wall-pass option.
+- Teammate context: if FWD1 is "making run into left channel", move right to stretch the defence.
+- Teammate context: if GK shows "about to distribute", sprint into space for the long ball.
+- Opponent threat list — you don't need to mark threats; leave that to DEF. Focus on runs.
+- Your home zone in the Tactical shape shifts: ALL_OUT_ATTACK pushes you to x≈36, DEFENSIVE drops you to x≈8.
+- Check stamina label — [TIRED] means jog into position instead of sprinting every run.
+- If a ⚡ SET PIECE line appears, move to the listed coordinates immediately (far/near post for corners).
+- Coach instructions override your defaults if present.
 
 ## Available Commands (commandType → parameters)
 

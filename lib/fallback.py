@@ -116,10 +116,11 @@ MID_CONFIG = FallbackConfig(
 
 FWD1_CONFIG = FallbackConfig(
     possession_action="SHOOT_OR_ADVANCE",
-    advance_x_factor=0.6, advance_y=-8, advance_sprint=True,
-    support_x_factor=0.5, support_y=-10, support_sprint=True,
-    default_x_factor=0.4, default_x_ref="opp_goal", default_y=-8,
-    press_distance=20.0, press_intensity=0.7,
+    advance_x_factor=0.75, advance_y=-8, advance_sprint=True,   # push deeper before advancing
+    support_x_factor=0.65, support_y=-10, support_sprint=True,  # run into the box, not midfield
+    default_x_factor=0.55, default_x_ref="opp_goal", default_y=-8,  # default pos higher up
+    press_distance=18.0, press_intensity=0.7,
+    shoot_threshold=30.0,   # shoot from further out
     shoot_aim="TR", shoot_power=0.9,
     default_stance=1,
     last_resort_command_type="PRESS_BALL", last_resort_params={"intensity": 0.6},
@@ -128,10 +129,11 @@ FWD1_CONFIG = FallbackConfig(
 
 FWD2_CONFIG = FallbackConfig(
     possession_action="SHOOT_OR_ADVANCE",
-    advance_x_factor=0.6, advance_y=8, advance_sprint=True,
-    support_x_factor=0.5, support_y=10, support_sprint=True,
-    default_x_factor=0.4, default_x_ref="opp_goal", default_y=8,
-    press_distance=20.0, press_intensity=0.7,
+    advance_x_factor=0.75, advance_y=8, advance_sprint=True,    # push deeper before advancing
+    support_x_factor=0.65, support_y=10, support_sprint=True,   # run into the box, not midfield
+    default_x_factor=0.55, default_x_ref="opp_goal", default_y=8,   # default pos higher up
+    press_distance=18.0, press_intensity=0.7,
+    shoot_threshold=30.0,   # shoot from further out
     shoot_aim="BL", shoot_power=0.9,
     default_stance=1,
     last_resort_command_type="PRESS_BALL", last_resort_params={"intensity": 0.6},
@@ -273,11 +275,18 @@ def _on_ball(cfg, game_state, players, team_id, my_player_id, pos, my_goal_x, op
     if cfg.possession_action == "GK_DISTRIBUTE":
         teammates = [p for p in players if _is_my_team(p, team_id) and _player_idx(p) != my_player_id]
         if teammates:
+            # Prefer forwards (player 3 or 4) with a KICK to launch attack;
+            # fall back to nearest teammate with a THROW if no forward found.
+            forwards = [p for p in teammates if _player_idx(p) in (3, 4)]
+            if forwards:
+                target = min(forwards, key=lambda p: abs(p.get("position", {}).get("x", 0) - opp_goal_x))
+                return [_cmd("GK_DISTRIBUTE", my_player_id, team_id,
+                             {"target_player_id": _player_idx(target), "method": "KICK"})]
             nearest = min(teammates, key=lambda p: dist(p.get("position", {}), pos))
             return [_cmd("GK_DISTRIBUTE", my_player_id, team_id,
                          {"target_player_id": _player_idx(nearest), "method": "THROW"})]
         return [_cmd("GK_DISTRIBUTE", my_player_id, team_id,
-                     {"target_player_id": 1, "method": "THROW"})]
+                     {"target_player_id": 3, "method": "KICK"})]
 
     if cfg.possession_action == "PASS":
         exclude = set(cfg.pass_exclude_ids) | {my_player_id}
