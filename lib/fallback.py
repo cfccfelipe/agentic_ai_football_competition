@@ -274,17 +274,32 @@ def _on_ball(cfg, game_state, players, team_id, my_player_id, pos, my_goal_x, op
     """Handle possession for all position types."""
     if cfg.possession_action == "GK_DISTRIBUTE":
         teammates = [p for p in players if _is_my_team(p, team_id) and _player_idx(p) != my_player_id]
+        opponents = [p for p in players if not _is_my_team(p, team_id)]
+
+        def _nearest_opp_dist(player):
+            """Distance from a teammate to the nearest opponent."""
+            p_pos = player.get("position", {})
+            if not opponents:
+                return 999.0
+            return min(dist(p_pos, o.get("position", {})) for o in opponents)
+
         if teammates:
-            # Prefer forwards (player 3 or 4) with a KICK to launch attack;
-            # fall back to nearest teammate with a THROW if no forward found.
+            # Try forwards first — only kick if they have a clear lane (nearest
+            # opponent is further than 8 units away so we don't gift possession).
             forwards = [p for p in teammates if _player_idx(p) in (3, 4)]
-            if forwards:
-                target = min(forwards, key=lambda p: abs(p.get("position", {}).get("x", 0) - opp_goal_x))
+            free_forwards = [p for p in forwards if _nearest_opp_dist(p) > 8.0]
+            if free_forwards:
+                # Pick the forward closest to the opponent goal
+                target = min(free_forwards, key=lambda p: abs(p.get("position", {}).get("x", 0) - opp_goal_x))
                 return [_cmd("GK_DISTRIBUTE", my_player_id, team_id,
                              {"target_player_id": _player_idx(target), "method": "KICK"})]
-            nearest = min(teammates, key=lambda p: dist(p.get("position", {}), pos))
+
+            # No free forward — throw to the safest (most space) nearby teammate
+            safest = max(teammates, key=_nearest_opp_dist)
+            method = "THROW" if dist(safest.get("position", {}), pos) < 20.0 else "KICK"
             return [_cmd("GK_DISTRIBUTE", my_player_id, team_id,
-                         {"target_player_id": _player_idx(nearest), "method": "THROW"})]
+                         {"target_player_id": _player_idx(safest), "method": method})]
+
         return [_cmd("GK_DISTRIBUTE", my_player_id, team_id,
                      {"target_player_id": 3, "method": "KICK"})]
 

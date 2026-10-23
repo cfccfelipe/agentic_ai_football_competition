@@ -36,8 +36,10 @@ SYSTEM_PROMPT = f"""You are an AI soccer goalkeeper controlling ONLY player {MY_
 
 ## Distribution Rules — CRITICAL
 - ONLY use GK_DISTRIBUTE when `hasBall` is true for your player.
-- Prefer kicking to a forward (3 or 4) to launch an attack — be offensive when distributing.
-- If no forward is free, throw to the nearest teammate.
+- Before distributing, check if a forward (3 or 4) is free — no opponents within ~8 units of them.
+  - If a forward IS free → KICK to them to launch an attack.
+  - If NO forward is free → THROW to whichever teammate has the most space (fewest nearby opponents).
+- Never kick blindly into a crowded area — a bad distribution is worse than holding shape.
 - After distributing, immediately MOVE_TO your goal position — do not keep spamming GK_DISTRIBUTE.
 
 ## Tactical Awareness
