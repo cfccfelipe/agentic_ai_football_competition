@@ -1,109 +1,72 @@
-# Review — static/dynamic per-tick prompt split with controlled ReAct flow
+# Review — tactics/md-tuning (markdown-only tactics tuning)
 
-Branch: `refactor/static-dynamic-prompt` @ `2eb6b85`
-Base: `feat/unified-agent-architecture`
+Base: `feat/unified-agent-architecture` · Head: `tactics/md-tuning` · Commit `52d6bff`
+
 Verdict: **APPROVED**
 
-## Scope reviewed
+Reviewed the branch diff (`git diff feat/unified-agent-architecture...tactics/md-tuning`),
+the `--name-only` list, the recorded commit verification, and the actual on-disk files for
+structural invariants. Did not re-run the suite; used the coder's recorded result.
 
-Diff `feat/unified-agent-architecture...refactor/static-dynamic-prompt` (14 files,
-+1967/-214). Production changes are confined to:
-- `src/agents/players/plugin_loader.py` — new `load_tool_catalog`, `build_static_base`,
-  `compose_tick_prompt`; `build_system_prompt` retired to a thin wrapper.
-- `src/agents/players/unified_agent.py` — static base built once in `register()`;
-  `invoke()` restructured into 3 phases with a logged strategy gate.
-- `src/governance/tool_catalog.md` — new static catalog of the four MCP tools.
-- Tests + `docs/per-tick-workflow.md` + `.agents/tasks/*`.
+## Gate 1 — ONLY markdown files changed — PASS
 
-Working tree clean (no uncommitted changes).
+`--name-only` lists 25 paths, every one a `.md` file:
+- `.agents/tasks/tactics-plan.md` (allowed plan artifact)
+- `src/governance/tool_catalog.md` (markdown; NOT `guardrails.md`, so allowed)
+- 3 × `src/plugins/strategies/*.md`
+- 5 × `src/plugins/<pos>/skill.md`
+- 15 × `src/plugins/<pos>/<strategy>.md`
 
-## Evidence relied on
+No `.py`, nothing under `cdk/`, no `Makefile`, no `.env`, and `src/governance/guardrails.md`
+is NOT in the diff. Gate passes.
 
-Commit message records `uv run pytest -q`: **170 passed (134 baseline + 36 new)**, e2e
-intact. I did not re-run the suite. One narrow spot-check was warranted for the central
-ADDITIVE A gate: `uv run pytest tests/test_unified_agent_phases.py -q` → **5 passed**.
+## Gate 2 — Tests green — PASS
 
-## Gate-by-gate findings
+Commit `52d6bff` message records, under "Verification (run from worktree root)":
+`uv run pytest -q -> 173 passed (no assertion edits needed)`. This matches the expected
+~173 tests run from the worktree root. Evidence present; no articulable doubt (markdown-only
+change), so no spot-check was warranted. Gate passes.
 
-**Tests green / e2e intact — PASS.** Recorded 170 passed. `tests/test_e2e_tick.py`
-retains all five guarantees: state-aware selection (losing-late→aggressive,
-winning-late→defensive), formation threaded into the prompt, a tactical tool offered AND
-used, exactly one VALID correctly-tagged command, and both infinite-loop protections
-(turns cap == `MAX_TOOL_ITERATIONS`, and a hanging model tripping the 3.5s wall-clock
-fallback). Only additive `evaluate_shot` assertions were added to it.
+## Gate 3 — Structure intact across all files — PASS
 
-**Budget / loop caps — PASS (unchanged).** `constants.py` still has
-`TICK_TIMEOUT_SECONDS = 3.5`, `MAX_TOOL_ITERATIONS = 2`, `PER_TOOL_TIMEOUT_SECONDS = 1.0`,
-`retries={"max_attempts": 1}`. `invoke()` PHASE 3 still runs under
-`asyncio.wait_for(..., timeout=TICK_TIMEOUT_SECONDS)` with `limits={"turns":
-MAX_TOOL_ITERATIONS}`, per-tool timeout wrapping intact, and the 3-layer fallback
-(LLM → `fallback_fn` → `last_resort`) preserved. No unbounded loop introduced — the phase
-control is ordered Python, not a new loop.
+- **3 strategies/*.md frontmatter**: all keep `type: strategy` and their valid formations —
+  aggressive `1-0-3`, balanced `1-2-1`, defensive `3-0-1` (unchanged; verified by reading the
+  frontmatter head of each file).
+- **5 <pos>/skill.md**: all 5 position index files keep `type: position`
+  (`def`, `fwd1`, `fwd2`, `gk`, `mid`). (`general/skill.md` is `type: scripts` and out of scope.)
+- **15 <pos>/<strategy>.md bodies**: all contain `{player_id}`, `{formation}`, a `## Response`
+  section, the "JSON array" wording and "exactly ONE" command contract (verified by scanning
+  every file). SHOOT example power lowered 1.0 → 0.9 in the aggressive forward/mid bodies; the
+  single-command array contract is preserved.
+- **No cross-wiring**: role identity line is correct in every file — gk = goalkeeper,
+  def = defender, mid = midfielder, fwd1 = "Forward 1", fwd2 = "Forward 2".
 
-**Forbidden paths — PASS.** Diff name list contains no `cdk/`, `node_modules/`,
-`agentcore.json`, `ai-team-strands-balanced/`, `sample-ai-possibilities/`, `Makefile`,
-`.env`, `registry.py`, `deploy_all.py`, or `guardrails.md`. Guardrail RULES are untouched;
-only a new, separate `tool_catalog.md` was added (presentation of tool-awareness, not a
-rule change).
+## Gate 4 — Decided tactical direction reflected — PASS
 
-**No code-execution surface — PASS.** No code interpreter / code-agent / new dependency.
-Calculation stays on the four existing MCP tools; `tool_catalog.md` names exactly those
-four and no others (enforced by `test_tool_catalog_names_exactly_the_four_tools`).
+(a) **SHOOTING** — FWD1/FWD2/MID bodies now instruct the model to call `evaluate_shot` FIRST
+and aim at the OPPONENT goal mouth for YOUR side (HOME→x=+55, AWAY→x=-55), explicitly "never a
+fixed corner regardless of side". The "always power 1.0 / take speculative shots" instruction
+is removed; aggressive SHOOT examples changed 1.0 → 0.9. Defensive forwards now shoot on-target
+if the ball falls in the box (via evaluate_shot) instead of reflex pass-back. ✔
 
-**.md-only tuning promise — PASS.** Registry folder-scanning discovery untouched
-(`strategy_names`/`strategy_descriptions` still delegate to `registry`).
-`test_drop_strategy_zero_code.py` drops a brand-new strategy folder set (strategies/ meta +
-all five position bodies, tool-free) and proves via the runtime entry points that it is
-planner-selectable and loadable for all five positions with zero Python edit.
+(b) **LESS PRESS / MORE PASS** — DEF and MID bodies and the balanced/defensive strategy bodies
+reduce PRESS_BALL to "purposeful, not constant chasing" and raise PASS/possession via
+`calculate_pass_options` (build out instead of hoofing/clearing). Pressing is kept purposeful,
+not removed. ✔
 
-**New-module deploy contract — PASS.** No new module under `players/` was added; the
-catalog ships inside the already-staged `governance/` folder.
-`test_deploy_contract.py` guards that `SHARED_MODULES` stays exactly the five runtime
-modules and that `governance` is in the staged set.
+(c) **AMBITION / STAMINA** — balanced bodies push the shape up ("push the shape up the pitch",
+"do not camp in our half", "be progressive, not passive") and stamina guidance stops
+over-conserving ("stop over-conserving stamina", "spend it where it matters"). ✔
 
-**Static built once / dynamic after decision / tool before risky action — PASS.**
-`build_static_base()` is called once in `register()` and captured in the closure;
-`invoke()` never recomposes it. `test_static_base_built_once_not_per_tick` breaks
-`build_static_base` after register() and the tick still succeeds. Dynamic body is appended
-only in PHASE 2 after the strategy is confirmed. `test_tool_catalog_drives_tool_use_with_tool_free_body`
-proves a tool call precedes a SHOOT driven by the static catalog alone.
-
-**ADDITIVE A — phase gate enforced + tested — PASS.** PHASE 1 resolves position + confirms
-strategy with a logged coercion guard (not `assert`); PHASE 2 composes; PHASE 3 builds the
-agent with tools. `test_phase_order_select_then_compose_then_factory` asserts
-`events == ["select", "compose", "factory"]`. `test_unknown_strategy_is_coerced_not_raised`
-proves coercion to `DEFAULT_STRATEGY` on the normal path.
-`test_raising_planner_falls_back_without_compose_or_factory` proves neither compose nor
-factory fires when the planner raises. No unbounded loop added.
-
-**ADDITIVE B — routing — PASS.** Single-source `constants.position_for` /
-`PLAYER_POSITIONS` (0=GK..4=FWD2). `effective_pid = myPlayers[0] if myPlayers else
-my_player_id`. `test_routing_by_agentid.py` parametrizes all agentId 0..4 × both teams ×
-both branches (payload-supplied myPlayers and pinned-id/myPlayers-absent), asserting the
-correct position marker is present AND cross-wiring markers are absent, and that the output
-is tagged with the right playerId/teamId. AWAY perspective handled via `summarize_state`.
-
-**ADDITIVE C — flow doc — PASS.** `docs/per-tick-workflow.md` updated to the static/dynamic
-split, the 3-phase gate (with the logged coercion), the settled MCP-tools-only calculation
-decision (explicit "no code-interpreter"), the md-only promise, and where each cap applies.
-Accurate to the implemented code; includes a keep-in-sync note and a mermaid diagram.
-
-**Approved Option — PASS.** Option Y (inject chosen strategy `.md` into the tick prompt, no
-in-tick network) is implemented. Decisive justification is the OFF-LIMITS `cdk/` rule
-(Option X needs a new gateway MCP tool registered in `cdk/`); latency corroborates. The
-no-extra-network claim holds against the 3.5s budget — both tool turns stay for PHASE 3.
-
-## Non-blocking note
-
-The commit message describes `test_unified_agent_phases.py` as "6" tests (T-ORDER x3,
-T-STATIC-b, T-TOOL, phase-order). The file actually contains 5 test functions and all 5
-pass (spot-checked). Every required category (phase ordering, coercion-not-raise,
-raising-planner fallback, static-built-once, catalog-drives-tool-use) is present and green;
-this is a narrative miscount in the commit message, not a behavioral or coverage gap. Not
-blocking.
+(d) **PLANNER DESCRIPTIONS** — strategies descriptions and the 5 skill.md index narrations are
+synced: balanced is the confident default for level/slim-margin with time left; aggressive
+covers chasing OR level-and-wanting-to-win; defensive is ONLY for protecting a CLEAR lead LATE.
+All three strategy descriptions and skill.md lines state gameTime is in SECONDS and ~120s is
+early, not late — so a low gameTime no longer over-triggers defensive. ✔
 
 ## Conclusion
 
-No blocking findings. All hard gates satisfied, caps and fallback intact, forbidden paths
-untouched, every ADDITIVE requirement implemented and tested, and the approved Option Y is
-correctly realized.
+All four gates pass. Markdown-only, tests recorded green, structure and role mapping intact,
+and the agreed tactical direction (fix shooting, less press / more possession, more ambition,
+smarter planner) is reflected consistently across bodies, strategy descriptions and skill
+indexes. APPROVED.
