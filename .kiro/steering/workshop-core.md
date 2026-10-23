@@ -12,6 +12,23 @@ strategy per tick and call deterministic MCP tools. Our code lives under
 ## Do Not Touch
 - `ai-team-strands-balanced/` (repo root) belongs to a teammate — never edit/move/delete.
 - `sample-ai-possibilities/` is upstream sample code — reference only, never modify.
+## Reuse what they give us; extend on top — never modify the given package
+The guiding principle for everything built on the workshop stack: **REUSE the vendored
+package as-is, EXTEND it with our own code.** The given package is a stable dependency we
+consume, never something we fork or edit.
+- **Reuse (consume as-is):** the vended `@aws/agentcore-cdk` L3 constructs
+  (`AgentCoreApplication`, `AgentCoreMcp`, …, anything under `node_modules/`), the
+  `agentcore.json` contract/schema, Bedrock AgentCore primitives, and the Strands/MCP
+  libraries. Read and call them; do not alter them.
+- **Extend (our code, on top):** `src/agents/players/agentcore/cdk/lib/cdk-stack.ts` and
+  `bin/cdk.ts` (our thin wrapper over the vended L3 — add resources here via the aws-cdk-lib
+  CDK escape hatch, e.g. `CfnGuardrail`), our agents/plugins/commons, and anything the
+  registry discovers by convention (drop-a-folder strategies). New capability is an
+  additive extension, not a patch to the given package.
+- **Forbidden:** editing anything under `node_modules/`, forking/patching the vended CDK,
+  or adding bespoke fields to the `agentcore.json` schema. If a feature cannot be built by
+  reusing + extending without altering the given package, STOP and raise it — do not modify
+  what the workshop provided.
 
 ## Autonomy — act, don't ask (this workspace)
 - The user has authorized acting without step-by-step approval in this workspace. Proceed
