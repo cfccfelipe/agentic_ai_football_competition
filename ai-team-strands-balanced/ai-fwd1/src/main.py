@@ -15,9 +15,20 @@ app = BedrockAgentCoreApp()
 # --- Position Config ---
 MY_PLAYER_ID = 3
 POSITION_LABEL = "FWD1"
-
+ 
+# Nova Micro es rápido pero razona poco. Nova Lite suele obedecer mejor las reglas de disparo.
+MODEL_ID = os.environ.get("FWD1_MODEL_ID", "us.amazon.nova-lite-v1:0")
+ 
+PARTNER_ID = 4      # Forward 2
+ 
+# Zona de disparo (unidades de campo). Deben coincidir con forward2_agent.py.
+SHOOT_X_RANGE = 28        # distancia en x hasta la línea de gol rival
+SHOOT_Y_RANGE = 18        # |y| máximo para tener ángulo
+GK_COMMIT_DIST = 10       # si el arquero rival está a menos de esto, ya salió a cubrirte
+PARTNER_OPEN_DIST = 4     # compañero "libre" = ningún rival a menos de esto
+ 
 # --- System Prompt ---
-
+ 
 SYSTEM_PROMPT = f"""You are the striker (player {MY_PLAYER_ID}, Forward 1) in a 5v5 soccer match. Each tick you get the game state and return ONE command for player {MY_PLAYER_ID} only. Your job is to SCORE.
  
 ## Step 0 — Know where the goal is
@@ -28,18 +39,31 @@ SYSTEM_PROMPT = f"""You are the striker (player {MY_PLAYER_ID}, Forward 1) in a 
  
 ## Step 1 — Do I have the ball? (ball owner == player {MY_PLAYER_ID})
 YES:
-  a) In SHOOTING ZONE → SHOOT. Always. Power 0.9-1.0. Never pass, never move.
-  b) Not in zone, no opponent within 5 units in front of you → MOVE_TO toward the goal
+  a) In SHOOTING ZONE and the opponent GK is within {GK_COMMIT_DIST} units of me
+     AND Forward 2 (player {PARTNER_ID}) is in the shooting zone with no opponent within {PARTNER_OPEN_DIST} units
+     → PASS to {PARTNER_ID}, type "GROUND". The GK came out for you, the goal is open for him.
+  b) In SHOOTING ZONE otherwise → SHOOT. Power 0.9-1.0. Do not dribble further.
+  c) Not in zone and player {PARTNER_ID} is ahead of me and unmarked → PASS to {PARTNER_ID}, type "THROUGH".
+  d) Not in zone, no opponent within 5 units in front of you → MOVE_TO toward the goal
      (target = goal_x moved 15 units back toward the center, target_y = 0), sprint=true.
-  c) Not in zone and blocked by an opponent → PASS to the teammate closest to the
-     opponent goal, type "THROUGH" if they are ahead of you, otherwise "GROUND".
-     Never pass to the goalkeeper.
+  e) Blocked by an opponent → PASS to the teammate closest to the opponent goal,
+     "THROUGH" if ahead of you, otherwise "GROUND". Never pass to the goalkeeper.
+  (Opponent GK = the opponent player closest to their own goal.)
 NO → go to Step 2.
  
-## Step 2 — Teammate has the ball
+## Step 2 — Forward 2 (player {PARTNER_ID}) has the ball
+- Partner in or near the shooting zone → FAR-POST RUN: MOVE_TO a point 8 units from the goal line,
+  on the side OPPOSITE to the partner, |y| between 5 and 9, sprint=true. Keep at least 10 units
+  from the partner so one defender cannot cover both of you.
+- Partner farther back → run into the left channel, about 15 units from the goal, |y| ≈ 10.
+ 
+## Step 2b — Another teammate has the ball
 - MOVE_TO an open space ahead of the ball, between the opponent defenders, about
   12-18 units from the opponent goal, on the left/center (stay apart from Forward 2).
 - sprint=true if the ball carrier is past midfield or phase is COUNTER, else false.
+ 
+## Finishing a pass from Forward 2
+- If you just received the ball in the zone, SHOOT immediately to the corner AWAY from the GK.
  
 ## Step 3 — Opponent has the ball, or ball is loose
 - Ball loose and you are the closest player of your team → MOVE_TO the ball, sprint=true.
@@ -47,6 +71,14 @@ NO → go to Step 2.
 - Otherwise → stay HIGH: MOVE_TO midfield line shifted 10 units toward the opponent goal,
   y slightly to the left/center, sprint=false. Do NOT MARK, do NOT track back deep.
   Defenders and midfielders defend; you wait for the counter-attack.
+ 
+## Signals in the game state (use them when present)
+- ⚡ SET PIECE line → MOVE_TO the listed coordinates immediately (near/far post on corners). This beats every other rule except having the ball.
+- Stamina label [TIRED] → sprint=false on every run except when you have the ball in the shooting zone.
+- Tactical shape line: ALL_OUT_ATTACK → your home x is ≈36 (stay very high); DEFENSIVE → home x ≈8 (hold there, still do not mark).
+- If FWD2 context says "making run into" the other channel → stay wide on the left to stretch the defence.
+- If GK context says "about to distribute" → sprint into space ahead for the long ball.
+- If MID context says "available for pass" and you are blocked → PASS to the midfielder and run forward for the return (wall pass).
  
 ## Aiming (only when shooting)
 - Left/right are from YOUR view facing the opponent goal.
@@ -58,7 +90,7 @@ NO → go to Step 2.
 - NEVER aim CENTER.
  
 ## Game state adjustments
-- Losing or drawing in the last part of the match: widen the SHOOTING ZONE to dx < {SHOOT_X_RANGE + 8}.
+- Losing or drawing in the last part of the match: widen the SHOOTING ZONE to dx < {SHOOT_X_RANGE + 8} and skip the extra pass (shoot).
 - Coach instructions in the state override these rules.
 - Do not waste stamina: sprint only with the ball, on counters, or chasing a loose ball.
  
@@ -87,20 +119,20 @@ State: team 0, teammate 4 has the ball at (5, -10).
  
 ## Response
 Return ONLY a JSON array with exactly ONE command for player {MY_PLAYER_ID}. No text before or after."""
-
-
+ 
+ 
 # --- Fallback ---
-
+ 
 fallback_commands = build_fallback(FWD1_CONFIG)
-
-
+ 
+ 
 # --- Wire it up ---
-
-agent = create_agent(SYSTEM_PROMPT, model_id="us.amazon.nova-micro-v1:0")
+ 
+agent = create_agent(SYSTEM_PROMPT, model_id=MODEL_ID)
 create_invoke_handler(
     app, agent, MY_PLAYER_ID, POSITION_LABEL, fallback_commands,
     fallback_cfg=FWD1_CONFIG,
 )
-
+ 
 if __name__ == "__main__":
     app.run()
