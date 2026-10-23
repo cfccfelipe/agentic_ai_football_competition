@@ -17,12 +17,11 @@ team coordination the guardrails require.
 
 ## Strategy files for this position
 
-- `aggressive.md` — formation 1-0-3. Read when the team is chasing goals: losing by
-  1+ with less than ~20 minutes left, losing by 2+ at any time, or level with time
-  running out. The forward presses hard and shoots on sight.
-- `balanced.md` — formation 1-2-1. The default. Read when no scoreline condition
-  applies: early game, level score, or a one-goal margin with plenty of time left.
-  The forward attacks in its natural role.
-- `defensive.md` — formation 3-0-1. Read when protecting a lead: winning by 1+ with
-  less than ~15 minutes left, or winning by 2+ with under ~25 minutes remaining. The
-  forward tracks back to help defend.
+- `aggressive.md` — formation 1-0-3. Read when the team is chasing (losing by any
+  margin) OR level and going for the win. The forward presses purposefully and takes
+  ON-target shots (evaluate_shot first), not speculative blasts.
+- `balanced.md` — formation 1-2-1. The confident default. Read whenever no clear
+  late-lead condition holds: level or slim margin with time left. gameTime is in
+  seconds, so ~120s is early, not late. The forward attacks ambitiously and keeps the ball.
+- `defensive.md` — formation 3-0-1. Read ONLY when protecting a CLEAR lead LATE in the
+  match (not on a slim or early lead; ~120s is early). The forward tracks back to help defend.
