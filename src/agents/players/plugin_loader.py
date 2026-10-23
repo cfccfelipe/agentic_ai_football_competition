@@ -19,6 +19,7 @@ if str(_SRC_ROOT) not in sys.path:
 from plugins import registry  # noqa: E402
 
 GOVERNANCE = _SRC_ROOT / "governance" / "guardrails.md"
+TOOL_CATALOG = _SRC_ROOT / "governance" / "tool_catalog.md"
 
 # Root of the plugins tree. Resolved from _SRC_ROOT so it matches both the
 # local checkout (src/plugins) and the deployed bundle, where deploy_all.py
@@ -29,6 +30,26 @@ _PLUGINS_ROOT = _SRC_ROOT / "plugins"
 def load_guardrails() -> str:
     """Return the fixed game guardrails that prefix every system prompt."""
     return GOVERNANCE.read_text(encoding="utf-8")
+
+
+def load_tool_catalog() -> str:
+    """Return the static tactical-tool catalog (names + when-to-use triggers).
+
+    Ships inside the deployed bundle's governance/ folder, same as guardrails.
+    A missing file raises FileNotFoundError at build time — a packaging error
+    that must surface loudly at process init, never silently mid-match.
+    """
+    return TOOL_CATALOG.read_text(encoding="utf-8")
+
+
+def build_static_base() -> str:
+    """The STATIC system-prompt base, built once per agent and cached.
+
+    guardrails (fixed rules) + the tactical-tool catalog. It is strategy- and
+    position-agnostic, so it never changes across ticks and is composed once at
+    register() time, not per tick.
+    """
+    return f"{load_guardrails()}\n\n---\n\n{load_tool_catalog()}"
 
 
 def load_skill_prompt(strategy: str, position_label: str, player_id: int) -> str:
@@ -67,11 +88,27 @@ def load_skill_prompt(strategy: str, position_label: str, player_id: int) -> str
     )
 
 
-def build_system_prompt(strategy: str, position_label: str, player_id: int) -> str:
-    """guardrails (fixed) + the strategy/position prompt (dynamic)."""
-    guardrails = load_guardrails()
+def compose_tick_prompt(
+    static_base: str, strategy: str, position_label: str, player_id: int
+) -> str:
+    """Per-tick composition: the cached STATIC base + the DYNAMIC strategy body.
+
+    Called once per tick AFTER the strategy is confirmed. One string join over
+    an already-cached base plus a local skill-file read — no network.
+    """
     skill = load_skill_prompt(strategy, position_label, player_id)
-    return f"{guardrails}\n\n---\n\n{skill}"
+    return f"{static_base}\n\n---\n\n{skill}"
+
+
+def build_system_prompt(strategy: str, position_label: str, player_id: int) -> str:
+    """static base (guardrails + tool catalog) + the strategy/position prompt.
+
+    Thin wrapper retained for tests / one-shot callers. The hot path builds the
+    static base once at register() and calls compose_tick_prompt() directly.
+    """
+    return compose_tick_prompt(
+        build_static_base(), strategy, position_label, player_id
+    )
 
 
 def strategy_descriptions() -> str:

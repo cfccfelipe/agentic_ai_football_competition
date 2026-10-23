@@ -1,194 +1,239 @@
-# Implementation Plan — plugins-by-position refactor
+# Implementation Plan — Static/Dynamic Prompt Split with Controlled ReAct Flow
 
-Reorganize strategy plugins FROM grouped-by-strategy (`src/plugins/{aggressive,balanced,defensive}/`)
-TO grouped-by-position (`src/plugins/{gk,def,mid,fwd1,fwd2}/`), with strategy metadata relocated
-to `src/plugins/strategies/` per `.agents/tasks/metadata-design.md`. Team-coordinated strategy
-selection is UNCHANGED: the planner still picks ONE team strategy per tick for all five agents
-(not per-agent-autonomous — that would break anti-ball-magnet coordination in
-governance/guardrails.md). This is a file-layout + load-path change only.
+Derived from the approved `design.md` (Revision 2). Python, Windows, `uv`, TDD,
+SOLID/DRY/YAGNI. All work happens in the worktree
+`c:\Users\FelipeCortes\agentic_ai_football_competition\.worktrees\static-dynamic-prompt`.
+Run everything with `uv run pytest` (never bare `python`). Baseline today: **134 tests
+green**. Every item below must leave the tree buildable and the suite green.
 
-Work entirely inside the worktree
-`c:\Users\FelipeCortes\agentic_ai_football_competition\.worktrees\plugins-by-position`.
-All `uv run pytest` commands run from that worktree root. TDD: update/add the test for a step
-before or alongside the code, and keep the suite green (108 tests today) at every step.
+TDD note: each code item lists the test(s) that gate it. Write or update the test first (or
+alongside), then the implementation, then run the stated command. Tests live under `tests/`
+and reuse `tests/test_helpers.py` fixtures (`GAME_STATE`, `mock_agentcore_gateway`, DI via
+`agent_factory`). Keep every new test pure — no AWS, no network.
 
-Design decisions already fixed by `metadata-design.md` and honored here (do not re-decide):
-- Strategy metadata lives in `src/plugins/strategies/<name>.md` as a one-frontmatter-block file
-  with keys `name` / `type: strategy` / `formation` / `description` (description VERBATIM from the
-  old strategy `skill.md`).
-- The registry distinguishes strategy-metadata files by `type == "strategy"`; position index files
-  use `type: position`; `general/` stays `type: scripts`.
-- `plugin_loader.build_system_prompt(strategy, position_label, player_id)` keeps its signature;
-  position prose resolves from `src/plugins/<position_label.lower()>/<strategy>.md`, formation
-  comes from the strategy metadata, guardrails still prefix every prompt.
-
-HARD constraints — do NOT touch: `src/agents/players/agentcore/cdk/` (entire folder), `node_modules/`,
-`agentcore.json`, `ai-team-strands-balanced/`, `sample-ai-possibilities/`, `src/plugins/general/`,
-the `Makefile`, and `.env`. `deploy_all.py` stages all of `src/plugins/` via `shutil.copytree` as
-`plugins/` — the new subfolders ride along with NO edit to `deploy_all.py` (verified: it copies the
-directory wholesale, not per-folder).
+Key facts verified in the worktree (ground truth for the plan):
+- `plugin_loader.py` has `_SRC_ROOT` and `_PLUGINS_ROOT`; `load_guardrails()` reads
+  `GOVERNANCE = _SRC_ROOT/"governance"/"guardrails.md"`. `build_system_prompt` already does
+  `guardrails + "\n\n---\n\n" + skill`.
+- `unified_agent.register()` is the once-per-process site (captures `skill_descriptions`,
+  `known_strategies`, `cached_tools`); `invoke()` currently calls
+  `plugin_loader.build_system_prompt(strategy, pos, effective_pid)` **inside** the per-tick
+  body, wrapped in `except Exception` → fallback.
+- `constants.DEFAULT_STRATEGY = "balanced"`, `constants.position_for`, `PLAYER_POSITIONS`
+  (0=GK,1=DEF,2=MID,3=FWD1,4=FWD2), `TICK_TIMEOUT_SECONDS=3.5`, `MAX_TOOL_ITERATIONS=2`,
+  `PER_TOOL_TIMEOUT_SECONDS=1.0` all present.
+- `registry.strategies()` / `plugin_loader.strategy_names()` read module-level
+  `registry.PLUGINS_DIR` / `plugin_loader._PLUGINS_ROOT` (no dir override in the runtime
+  path) — T-DROP must monkeypatch BOTH.
+- `guardrails.md` has `## 8. Decision Priority (Every Tick)`, item 4 = "consult the tactical
+  tools, then PASS or SHOOT". Catalog must stay consistent, contradict nothing.
+- `deploy_all.py` stages `("commons","plugins","governance","requirements.txt",*SHARED_MODULES)`;
+  `SHARED_MODULES = ["constants.py","planner.py","plugin_loader.py","unified_agent.py","runtime_guards.py"]`.
+  A new `governance/*.md` ships automatically. **No new `players/` module is introduced by
+  this plan**, so `SHARED_MODULES` stays unchanged (item 9 guards that invariant).
+- All five `ai-<pos>/src/main.py` pin the correct id (gk=0, def=1, mid=2, fwd1=3, fwd2=4) and
+  call `unified_agent.register(app, MY_PLAYER_ID)` — no change needed.
+- Strands pinned `strands-agents>=1.13.0` (`src/agents/players/requirements.txt`). The
+  controlled flow uses only `Agent(model, system_prompt, tools)` + per-invocation
+  `limits={"turns": 2}` — no newer API. Phase control is ordered Python, not a Strands graph.
+- `docs/per-tick-workflow.md` exists and shows the OLD single-step build → UPDATE, not create.
 
 ---
 
-- [ ] 1. Create the relocated strategy-metadata folder `src/plugins/strategies/` with one file per
-      strategy carrying ONLY frontmatter (no position prose). Copy each `name` / `formation` /
-      `description` VERBATIM from the matching old `src/plugins/<name>/skill.md`, changing only the
-      discriminator to `type: strategy`. Bindings: aggressive→1-0-3, balanced→1-2-1, defensive→3-0-1.
-      Keep the folded `>` description scalar and flat `formation:` scalar exactly as the old files
-      wrote them so the existing `_parse_frontmatter` and formation validation still apply.
-      Files: `src/plugins/strategies/aggressive.md`, `src/plugins/strategies/balanced.md`,
-      `src/plugins/strategies/defensive.md`
-      Verify: `uv run python -c "import sys; sys.path.insert(0,'src'); from plugins import registry; print(sorted(registry.discover(registry.PLUGINS_DIR/'strategies')))"`
-      prints the three names. (Full suite not yet green — registry still filters `type=='skill'`; fixed in step 3.)
+- [ ] 1. Add the static tool-catalog markdown asset.
+      Create `src/governance/tool_catalog.md` — a self-contained markdown section that names
+      EXACTLY the four deployed tactical tools (`evaluate_shot`, `calculate_pass_options`,
+      `find_open_space`, `get_defensive_assignment`), gives a one-line trigger for each, and
+      states the controlled-flow contract ("before a risky action call the matching tool once,
+      read the result, then return exactly one JSON-array command"). Use the catalog body from
+      design §3 as the source text. It must restate NO rule that contradicts `guardrails.md`
+      (no "return prose", no ">1 command", no "shoot toward your own goal"), and must mention
+      no tool-looking token other than those four. This file ships via the already-staged
+      `governance/` folder — no `deploy_all.py` change.
+      Files: `src/governance/tool_catalog.md`
+      Verify: `uv run pytest -q` — still 134 green (no code references it yet; this item just
+      adds the asset the next items consume).
 
-- [ ] 2. Move each position-strategy file into its position folder, CONTENT BYTE-FOR-BYTE UNCHANGED
-      (preserve `{player_id}` / `{formation}` tokens and the `## Formation posture` sections). Use
-      `git -C <worktree> mv` so history follows the move. Exact mapping (all 15 files):
-      `aggressive/gk.md`→`gk/aggressive.md`, `balanced/gk.md`→`gk/balanced.md`, `defensive/gk.md`→`gk/defensive.md`;
-      `aggressive/def.md`→`def/aggressive.md`, `balanced/def.md`→`def/balanced.md`, `defensive/def.md`→`def/defensive.md`;
-      `aggressive/mid.md`→`mid/aggressive.md`, `balanced/mid.md`→`mid/balanced.md`, `defensive/mid.md`→`mid/defensive.md`;
-      `aggressive/fwd1.md`→`fwd1/aggressive.md`, `balanced/fwd1.md`→`fwd1/balanced.md`, `defensive/fwd1.md`→`fwd1/defensive.md`;
-      `aggressive/fwd2.md`→`fwd2/aggressive.md`, `balanced/fwd2.md`→`fwd2/balanced.md`, `defensive/fwd2.md`→`fwd2/defensive.md`.
-      Then delete the now-empty old strategy folders including their `skill.md`:
-      `src/plugins/aggressive/`, `src/plugins/balanced/`, `src/plugins/defensive/`.
-      Files: creates `src/plugins/{gk,def,mid,fwd1,fwd2}/{aggressive,balanced,defensive}.md`;
-      removes `src/plugins/{aggressive,balanced,defensive}/` entirely.
-      Verify: `git -C <worktree> status` shows 15 renames and the three skill.md deletions;
-      `src/plugins/general/` is untouched. (Suite still red until steps 3-4.)
+- [ ] 2. Add `load_tool_catalog()` and `build_static_base()` to the loader (TDD, T-CAT + T-STATIC part 1).
+      First write `tests/test_plugin_loader_static.py`: (T-CAT) `plugin_loader.load_tool_catalog()`
+      returns text containing exactly the four tool names and no other `\w+_\w+`-looking tool
+      token, and does NOT contain contradictory guardrail wording; (T-STATIC-a)
+      `plugin_loader.build_static_base()` returns a string containing both the full guardrails
+      text (assert on `"JSON array"`) and all four tool names, and two calls return identical
+      text. Then implement in `plugin_loader.py`: `load_tool_catalog() -> str` reads
+      `_SRC_ROOT/"governance"/"tool_catalog.md"` (mirrors `load_guardrails`), and
+      `build_static_base() -> str` returns `load_guardrails() + "\n\n---\n\n" + load_tool_catalog()`.
+      Pure, deterministic, no strategy/position args.
+      Files: `src/agents/players/plugin_loader.py`, `tests/test_plugin_loader_static.py`
+      Verify: `uv run pytest -q tests/test_plugin_loader_static.py` — new tests pass.
 
-- [ ] 3. Create the five NEW per-position `skill.md` index files per design-note §3. Each uses
-      `type: position` frontmatter (so the registry never treats it as a strategy or scripts), lists
-      the three strategy files (`aggressive.md`, `balanced.md`, `defensive.md`) for that position with
-      each strategy's formation stated next to it (aggressive→1-0-3, balanced→1-2-1, defensive→3-0-1),
-      and gives when-to-use-which guidance mirrored from the OLD strategy `skill.md` descriptions,
-      re-expressed for this position. The index MUST state that the authoritative team-strategy pick is
-      made ONCE per tick by the planner and must NOT invite the agent to pick its own mode (per
-      guardrails.md §5). No `{player_id}` / `{formation}` tokens — the index is navigation only, never
-      loaded into the runtime prompt.
-      Files: `src/plugins/gk/skill.md`, `src/plugins/def/skill.md`, `src/plugins/mid/skill.md`,
-      `src/plugins/fwd1/skill.md`, `src/plugins/fwd2/skill.md`
-      Verify: deferred to step 4's registry test (an index must NOT be discovered as a strategy).
+- [ ] 3. Add `compose_tick_prompt()` and rewire `build_system_prompt()` as a thin wrapper (TDD, T-DYNAMIC loader part).
+      Extend `tests/test_plugin_loader_static.py`: assert
+      `compose_tick_prompt(base, "aggressive", "FWD1", 3)` equals
+      `base + "\n\n---\n\n" + load_skill_prompt("aggressive","FWD1",3)`, carries the FWD1-aggressive
+      body marker and the resolved formation `"1-0-3"`; and assert `build_system_prompt("aggressive","FWD1",3)`
+      STILL contains the full guardrails (`"JSON array"`), a tool name, `"Formation"`, and `"1-0-3"`
+      (Finding 5 — keeps the e2e markers alive). Then implement in `plugin_loader.py`:
+      `compose_tick_prompt(static_base, strategy, position_label, player_id) -> str` returns
+      `static_base + "\n\n---\n\n" + load_skill_prompt(strategy, position_label, player_id)`;
+      re-express `build_system_prompt(strategy, position, player_id)` as
+      `compose_tick_prompt(build_static_base(), strategy, position, player_id)`. Leave
+      `load_skill_prompt`, `strategy_descriptions`, `strategy_names` unchanged (registry discovery
+      untouched → north-star AC-N1 preserved).
+      Files: `src/agents/players/plugin_loader.py`, `tests/test_plugin_loader_static.py`
+      Verify: `uv run pytest -q tests/test_plugin_loader_static.py` and `uv run pytest -q` — all green
+      (existing `build_system_prompt` callers, incl. e2e, still pass via the wrapper).
 
-- [ ] 4. Update `src/plugins/registry.py` so `strategies()` sources the strategy set from the
-      `strategies/` metadata files instead of filtering `type == "skill"`. Change the `strategies()`
-      filter to select `type == "strategy"` (which, with the new layout, are exactly the files under
-      `strategies/`); `SkillMeta.type`'s docstring comment should note the `"strategy" | "position" |
-      "scripts"` values. `discover()`, `_parse_frontmatter`, `_load_meta`, `strategy_descriptions()`,
-      and `SkillMeta` keep their signatures — only the strategy filter changes. Each strategy's
-      `SkillMeta.path` now points at `src/plugins/strategies/` (the metadata dir), NOT a position folder.
-      Update `tests/test_registry.py`: `test_strategies_excludes_scripts` must still yield exactly
-      `{balanced, aggressive, defensive}` and exclude `general` AND the five position indexes;
-      `test_discovers_all_plugins` expectations adjust to the new folder set (general + strategies/ files
-      + five position indexes are all discoverable, but only the three are strategies);
-      `test_general_is_scripts_and_autoload`, `test_each_strategy_has_a_description`, and
-      `test_strategy_descriptions_block_mentions_each` must still pass. Add a test asserting a
-      `type: position` index is NOT returned by `strategies()`.
-      Files: `src/plugins/registry.py`, `tests/test_registry.py`
-      Verify: `uv run pytest -q tests/test_registry.py` — all registry tests pass.
+- [ ] 4. Wire the static base + 3-phase controlled flow into `unified_agent.py` (TDD, T-ORDER + T-DYNAMIC + T-STATIC part 2).
+      Create `tests/test_unified_agent_phases.py` FIRST using `mock_agentcore_gateway()` and the
+      `agent_factory` DI seam (follow `test_unified_agent_invoke.py` / `test_e2e_tick.py` patterns):
+      (T-ORDER) spy/counter on `planner.select_strategy`, `plugin_loader.compose_tick_prompt`, and
+      the injected `agent_factory`; assert call order select_strategy → compose_tick_prompt →
+      agent_factory, and that compose/factory do NOT run until select_strategy returns. Force
+      select_strategy to return an UNKNOWN name → assert the PHASE-1 guard coerces it to
+      `constants.DEFAULT_STRATEGY` WITHOUT raising (a valid command still comes out via the normal
+      compose path, not the `except`→fallback path, and `compose_tick_prompt` received the default).
+      Force select_strategy to RAISE → assert neither compose_tick_prompt nor agent_factory fired and
+      a deterministic fallback command is returned. (T-STATIC-b) monkeypatch
+      `plugin_loader.build_static_base` to raise AFTER `register()` has run, then run a tick and
+      assert it still succeeds — proving the base was captured once in the closure and is not rebuilt
+      per tick. Then implement in `unified_agent.py`:
+        - In `register()`, after computing `known_strategies`, add
+          `static_base = plugin_loader.build_static_base()` captured in the closure.
+        - In `invoke()`, restructure into three explicit phases:
+          PHASE 1 — parse, resolve `effective_pid`/`pos`, call `planner.select_strategy(...)`, then an
+          explicit **logged guard** (NOT `assert`): `if strategy not in known_strategies:
+          log.warn(...); strategy = constants.DEFAULT_STRATEGY`.
+          PHASE 2 — `system_prompt = plugin_loader.compose_tick_prompt(static_base, strategy, pos, effective_pid)`
+          and `summarize_state(...)`.
+          PHASE 3 — build the agent with `tools=cached_tools`, run under the EXISTING
+          `limits={"turns": constants.MAX_TOOL_ITERATIONS}`, `asyncio.wait_for(timeout=TICK_TIMEOUT_SECONDS)`
+          over the executor, `parse_commands` → yield, else fallback; on timeout → fallback.
+        Keep the whole body in the existing `except Exception` → fallback, and the per-tool timeout
+        wrapping, retries-off, and 3-layer fallback exactly as today. Do NOT call `build_static_base`
+        inside `invoke()`.
+      Files: `src/agents/players/unified_agent.py`, `tests/test_unified_agent_phases.py`
+      Verify: `uv run pytest -q tests/test_unified_agent_phases.py tests/test_unified_agent_invoke.py` —
+      new phase tests pass and the existing invoke-guard tests (timeout, raising-model, cap-as-limits,
+      valid-command) stay green.
 
-- [ ] 5. Update `src/agents/players/plugin_loader.py` `load_skill_prompt` to the design-note §4
-      load-path contract: look up strategy metadata from `registry.strategies()` (unknown → fall back
-      to `DEFAULT_STRATEGY` + `DEFAULT_FORMATION`); resolve position prose from the POSITION folder
-      `_SRC_ROOT/"plugins"/<position_label.lower()>/<strategy>.md` (NOT from `meta.path`, which now
-      points at `strategies/`); if that file is missing, fall back to `plugins/mid/<strategy>.md`;
-      formation still comes from `meta.formation`; `{player_id}` / `{formation}` substitution and the
-      `build_system_prompt` guardrails-prefix are unchanged. Add a module-level plugins-root path
-      (e.g. `_PLUGINS_ROOT = _SRC_ROOT / "plugins"`) so both local and staged layouts resolve
-      identically. `tests/test_plugin_loader.py` assertions should all still hold as written
-      (`test_unknown_strategy_falls_back_to_default`, `test_unknown_position_falls_back_to_mid`,
-      `test_build_system_prompt_renders_formation_and_keeps_guardrails`, etc.); add an explicit test
-      that `load_skill_prompt("aggressive", "MID", 2)` loads `plugins/mid/aggressive.md` and the
-      composed `build_system_prompt` output contains the guardrails block and the `1-0-3` formation line.
-      Files: `src/agents/players/plugin_loader.py`, `tests/test_plugin_loader.py`
-      Verify: `uv run pytest -q tests/test_plugin_loader.py` — all loader tests pass, including the
-      new mid+aggressive sample.
+- [ ] 5. Prove tool-awareness is driven by the static catalog alone (TDD, T-TOOL, north-star AC-N3).
+      Add `test_tool_catalog_drives_tool_use` to `tests/test_unified_agent_phases.py` (or a new
+      `tests/test_decide_with_facts.py`). Inject a fake `evaluate_shot` tool (count calls, like
+      `_FakeTool` in `test_e2e_tick.py`) and a fake model whose `agent_factory` callback, BEFORE
+      returning a SHOOT command, calls the offered tool once — modelling a catalog-following agent.
+      Use a possession state (FWD on the ball) and assert `tool.calls >= 1` and the final command is
+      a single VALID command. The assertion proves the static catalog makes the agent tool-aware
+      independent of any per-body tool wording (the skill bodies are NOT edited in this plan).
+      Files: `tests/test_unified_agent_phases.py` (or `tests/test_decide_with_facts.py`)
+      Verify: `uv run pytest -q tests/test_unified_agent_phases.py` (or the new file) — passes.
 
-- [ ] 6. Confirm `src/agents/players/planner.py` and `src/agents/players/constants.py` need NO logic
-      change (the planner consumes `strategy_descriptions()` + the discovered `known` set and is
-      source-agnostic; `STRATEGIES`, `DEFAULT_STRATEGY`, `MODEL_ID`, `ALLOWED_FORMATIONS`,
-      `DEFAULT_FORMATION` all stay intact). If any shared literal is genuinely clearer centralized in
-      `constants.py`, move it there WITHOUT removing `MODEL_ID` or `ALLOWED_FORMATIONS`; otherwise leave
-      both files unchanged. Run `tests/test_planner.py` to prove selection (hint pass-through,
-      rule-based scoreline/clock, discovered-strategy pick, longest-match-first, timeout fallback) is
-      unaffected.
-      Files: `src/agents/players/planner.py`, `src/agents/players/constants.py` (likely no edit)
-      Verify: `uv run pytest -q tests/test_planner.py` — all planner tests pass.
+- [ ] 6. Prove per-agentId routing to position + skill file for both teams (TDD, T-ROUTE, AC-B1..B4).
+      Add `tests/test_routing_by_agentid.py`. Parametrize over `player_id ∈ {0,1,2,3,4}` ×
+      `team_id ∈ {0,1}`, capturing the composed `system_prompt` via the `agent_factory` DI seam.
+      Branch (a) payload-supplied: payload carries `myPlayers=[pid]` (and `teamCode:"away"` players for
+      team 1); assert the composed prompt contains the position-unique body marker for that pid
+      (GK text for 0, DEF for 1, MID for 2, FWD1 for 3, FWD2 for 4) and the correct HOME/AWAY
+      perspective. Branch (b) pinned-id: register with `my_player_id=pid`, OMIT `myPlayers`; assert
+      the same position body resolves. Confirms single-source `constants.position_for`, no
+      cross-wiring, and both resolution paths. (Pick stable per-position markers from the real
+      `src/plugins/<pos>/<strategy>.md` bodies during implementation.)
+      Files: `tests/test_routing_by_agentid.py`
+      Verify: `uv run pytest -q tests/test_routing_by_agentid.py` — all parametrizations pass.
 
-- [ ] 7. Update `src/agents/players/discover_strategy.py` so a newly discovered strategy writes the
-      NEW layout: one `strategies/<name>.md` metadata file (frontmatter `name`/`type: strategy`/
-      `formation`/`description`) PLUS the five position bodies written as `<position>/<name>.md`
-      (`gk/<name>.md` … `fwd2/<name>.md`), staged to an OS-temp dir and moved into place ONLY on full
-      success. Adjust `REQUIRED_FILES`/the `research` spec shape and the staged re-validation
-      (`_load_meta` must now parse the staged `strategies/<name>.md` as `type == "strategy"`), and the
-      collision/overlap/name-safety/content-safety validators keep working against the new file map.
-      Keep it OFF the tick path (still never imported by `unified_agent`). Update
-      `tests/test_discover_strategy.py`: `_good_files` / `_seed_existing` / `REQUIRED_FILES` expectations
-      and `test_good_spec_is_written`'s written-file assertion move to the position-grouped output
-      (metadata file + five position files); the rejection tests (missing file, empty description, bad
-      formation, folded formation, name collision, substring overlap, override content, URL, invalid
-      command token, missing response line, unsafe name, name mismatch) must all still reject with
-      nothing written.
-      Files: `src/agents/players/discover_strategy.py`, `tests/test_discover_strategy.py`
-      Verify: `uv run pytest -q tests/test_discover_strategy.py` — all discovery tests pass; a
-      generated strategy produces `strategies/<name>.md` + `<pos>/<name>.md` for all five positions.
+- [ ] 7. Prove drop-a-new-strategy is zero-code (TDD, T-DROP, north-star AC-N1).
+      Add `tests/test_drop_strategy_zero_code.py`. In `tmp_path`, build a minimal copy of the plugins
+      tree: a `strategies/` folder plus the five position folders (`gk/def/mid/fwd1/fwd2`), each with
+      the three existing strategy bodies, then drop a BRAND-NEW strategy: `strategies/<new>.md` with
+      valid frontmatter (`name/type: strategy/formation/description`) and `<pos>/<new>.md` for all five
+      positions. `monkeypatch.setattr` BOTH `registry.PLUGINS_DIR` AND `plugin_loader._PLUGINS_ROOT`
+      to the tmp tree (clear any registry cache if one exists). Then assert, through the runtime entry
+      points (NOT `registry.discover(dir)` directly): (a) `plugin_loader.strategy_names()` includes
+      `<new>` (planner-selectable), and (b) `plugin_loader.load_skill_prompt("<new>", label, pid)`
+      loads the new body for every one of the five position labels. Zero Python edited to add `<new>`.
+      Files: `tests/test_drop_strategy_zero_code.py`
+      Verify: `uv run pytest -q tests/test_drop_strategy_zero_code.py` — passes.
 
-- [ ] 8. Update `tests/test_e2e_tick.py` to the new layout and confirm the five-point tick guarantee
-      holds end-to-end: (1) state-aware selection (losing-late→aggressive, winning-late→defensive) via
-      the REAL registry-discovered set, (2) the chosen formation renders into the composed prompt
-      (value in `ALLOWED_FORMATIONS`, `Formation` line present), (3) a tactical tool is offered and
-      used, (4) exactly one valid command tagged with the right teamId/playerId, (5) infinite-loop
-      safety (turns cap + wall-clock timeout fallback). Most assertions are layout-agnostic and should
-      pass unchanged once steps 4-5 land; adjust only anything that referenced the old strategy-folder
-      path.
+- [ ] 8. Update the e2e baseline to the new prompt structure, keeping all five guarantees (T-E2E, AC-R4).
+      Edit `tests/test_e2e_tick.py` ONLY where the prompt structure changed. In
+      `test_planner_is_state_aware_and_formation_resolves`, keep the direct
+      `build_system_prompt("aggressive","FWD1",3)` call and its `"1-0-3"`, `"Formation"`, `"JSON array"`
+      assertions (the wrapper routes through `build_static_base`, so they hold) and ADD a tool-catalog
+      marker assertion (e.g. `"evaluate_shot" in prompt`). In the happy-path tick, keep the
+      formation-in-prompt, tool-offered-AND-used, `limits == {"turns": MAX_TOOL_ITERATIONS}`, and
+      single-valid-command assertions; the composed prompt now also contains a tool name — assert it.
+      Leave the cap-stops-loop and timeout-fallback tests unchanged. Do not weaken any of the five
+      guarantees (state-aware selection, formation in prompt, a tool used, exactly one VALID command,
+      infinite-loop safety).
       Files: `tests/test_e2e_tick.py`
-      Verify: `uv run pytest -q tests/test_e2e_tick.py` — all e2e tick tests pass.
+      Verify: `uv run pytest -q tests/test_e2e_tick.py` — all e2e tests pass with guarantees intact.
 
-- [ ] 9. Full-suite regression + deploy-staging sanity. Run the whole suite from the worktree root and
-      confirm it stays green at 108 tests (any net test-count change must be a deliberate add in steps
-      4/5/7, documented in the step, not a silent loss of coverage). Then prove the staged layout
-      resolves by simulating the deploy copytree into a temp dir and loading a prompt from it:
-      copy `src/plugins` and `src/governance` into an OS-temp dir and run `plugin_loader`-style
-      resolution of `mid/aggressive.md` against that copied tree, asserting the composed prompt still
-      contains the guardrails block and the `1-0-3` formation line. Do NOT edit `deploy_all.py`,
-      `Makefile`, or `.env`. Clean up the temp dir in the same step.
-      Files: none (verification only)
-      Verify: `uv run pytest -q` from the worktree root reports 108 passed (or the documented new
-      total); the temp-dir staged-resolution check prints a prompt containing both `JSON array` /
-      guardrails text and `1-0-3`.
+- [ ] 9. Guard the packaging / deploy contract (TDD, T-PKG, AC-R5).
+      Add `tests/test_deploy_contract.py` (import `deploy_all` as a module — its `main()` is guarded by
+      `__main__`, so import is side-effect-free). Assert: `src/governance/tool_catalog.md` exists;
+      the staged set in `deploy_all` includes `"governance"` (so the new file ships) — assert on the
+      literal tuple used in `cleanup()`/`main()` staging, i.e. `"governance"` is among the staged
+      folder names; and `deploy_all.SHARED_MODULES` equals the current five
+      (`constants.py, planner.py, plugin_loader.py, unified_agent.py, runtime_guards.py`) so a future
+      new `players/` module is caught by this guard. This plan adds NO new `players/` module, so no
+      `SHARED_MODULES` edit is expected.
+      Files: `tests/test_deploy_contract.py`
+      Verify: `uv run pytest -q tests/test_deploy_contract.py` — passes.
+
+- [ ] 10. Update the per-tick workflow document to match the implemented code (AC-C1/AC-C2/AC-X1).
+      UPDATE (do not duplicate) `docs/per-tick-workflow.md`: replace the single-step
+      `build_system_prompt` box with the static/dynamic split — guardrails + `tool_catalog.md` built
+      ONCE at `register()` and cached, then the chosen strategy body appended per tick via
+      `compose_tick_prompt`. Describe the controlled sequence: receive state → resolve position from
+      agentId → PHASE 1 confirm/parse strategy (with the logged default-coercion guard) → PHASE 2
+      consult this position's skill content → PHASE 3 controlled-ReAct tactical-tool consultation →
+      single validated command. State the settled calculation decision (the four MCP tactical tools
+      ONLY; explicitly NO code interpreter / code execution), the markdown-only tuning promise
+      (drop-a-folder adds a strategy with zero code; improving tactics is a `.md` edit), and WHERE the
+      `3.5s` wall-clock timeout and `2`-iteration cap apply. Add a line that the document must be kept
+      accurate to the implemented code. Update the mermaid flow to show the two-layer prompt (cached
+      static base + per-tick strategy body) and the PHASE 1/2/3 gate.
+      Files: `docs/per-tick-workflow.md`
+      Verify: manual read-through for accuracy against items 1–9; `uv run pytest -q` still green
+      (doc change does not affect tests, but confirm no accidental code edit).
+
+- [ ] 11. Optional markdown-only reinforcement of skill bodies (ONLY if cheap; NOT required).
+      This is explicitly optional per design §6/AC-N3 — the static catalog is the SUFFICIENT driver of
+      decide-with-facts and no test depends on per-body tool wording. If done, soften blind-action
+      wording in `src/plugins/<pos>/<strategy>.md` toward tool-first (e.g. `fwd1/aggressive.md`
+      "always shoot with maximum power" → "call `evaluate_shot` first, then shoot if it's worth it").
+      Make NO behavioral/code change and do NOT make any new strategy require tool wording. Skip this
+      item entirely if time-constrained.
+      Files: `src/plugins/<gk|def|mid|fwd1|fwd2>/<aggressive|balanced|defensive>.md` (optional subset)
+      Verify: `uv run pytest -q` — still green (markdown-only, no test should break).
+
+- [ ] 12. Full-suite regression gate (AC-R1..R5, north-star).
+      Run the entire suite from the worktree root and confirm the baseline grew by exactly the new
+      tests with ZERO regressions: the 134 existing tests plus the new files (T-STATIC/T-CAT/T-DYNAMIC
+      in `test_plugin_loader_static.py`, T-ORDER/T-TOOL/T-STATIC-b in `test_unified_agent_phases.py`,
+      T-ROUTE, T-DROP, T-PKG). Confirm the do-not-regress invariants still hold via the tests:
+      `TICK_TIMEOUT_SECONDS=3.5` timeout→fallback, `MAX_TOOL_ITERATIONS=2` cap, `PER_TOOL_TIMEOUT_SECONDS=1.0`,
+      retries-off, 3-layer fallback, no infinite loop. Remove any scratch/temp files created during
+      development (nothing left under `src/` or the repo root).
+      Files: (none — verification only)
+      Verify: `uv run pytest -q` from the worktree root — all green, count = 134 + the new tests, and
+      `git status` shows only the intended files changed (tool_catalog.md, plugin_loader.py,
+      unified_agent.py, the new/updated test files, per-tick-workflow.md, and any optional item-11 md).
 
 ---
 
-## Exact move mapping (reference for step 2)
+## Notes for the implementer
 
-| From (grouped by strategy) | To (grouped by position) |
-|---|---|
-| `src/plugins/aggressive/gk.md`   | `src/plugins/gk/aggressive.md`   |
-| `src/plugins/balanced/gk.md`     | `src/plugins/gk/balanced.md`     |
-| `src/plugins/defensive/gk.md`    | `src/plugins/gk/defensive.md`    |
-| `src/plugins/aggressive/def.md`  | `src/plugins/def/aggressive.md`  |
-| `src/plugins/balanced/def.md`    | `src/plugins/def/balanced.md`    |
-| `src/plugins/defensive/def.md`   | `src/plugins/def/defensive.md`   |
-| `src/plugins/aggressive/mid.md`  | `src/plugins/mid/aggressive.md`  |
-| `src/plugins/balanced/mid.md`    | `src/plugins/mid/balanced.md`    |
-| `src/plugins/defensive/mid.md`   | `src/plugins/mid/defensive.md`   |
-| `src/plugins/aggressive/fwd1.md` | `src/plugins/fwd1/aggressive.md` |
-| `src/plugins/balanced/fwd1.md`   | `src/plugins/fwd1/balanced.md`   |
-| `src/plugins/defensive/fwd1.md`  | `src/plugins/fwd1/defensive.md`  |
-| `src/plugins/aggressive/fwd2.md` | `src/plugins/fwd2/aggressive.md` |
-| `src/plugins/balanced/fwd2.md`   | `src/plugins/fwd2/balanced.md`   |
-| `src/plugins/defensive/fwd2.md`  | `src/plugins/fwd2/defensive.md`  |
-
-Strategy metadata extracted to `src/plugins/strategies/{aggressive,balanced,defensive}.md` (step 1);
-old `src/plugins/{aggressive,balanced,defensive}/` folders (incl. their `skill.md`) removed (step 2).
-`src/plugins/general/` is never touched.
-
-## Final verification (whole task)
-
-From `c:\Users\FelipeCortes\agentic_ai_football_competition\.worktrees\plugins-by-position`:
-
-```
-uv run pytest -q
-```
-
-Expect 108 passed (green), with every path-dependent test updated to the position-grouped layout and
-the e2e tick guarantees intact.
+- Build-state invariant: every item leaves the suite green. Items 2–3 touch only the loader
+  (wrapper keeps old callers working); item 4 is the one that changes `invoke()` flow and is gated by
+  both the new phase tests and the existing invoke-guard tests.
+- Do NOT edit: `src/agents/players/agentcore/cdk/` (entire tree), `node_modules/`, `agentcore.json`,
+  the `Makefile`, `.env`, `ai-team-strands-balanced/`, `sample-ai-possibilities/`. Extend only our code.
+- No new dependency and no code-interpreter/code-execution surface (AC-X1). Only the existing four MCP
+  tactical tools do probability/advantage math.
+- No new module under `src/agents/players/` is introduced, so `deploy_all.py SHARED_MODULES` is NOT
+  edited; item 9 guards that this stays true. If any future edit DOES add such a module, it must be
+  added to `SHARED_MODULES` in the SAME change or the deployed bundle crashes with ModuleNotFoundError.
+- Markdown single-tuning-surface promise (north-star): adding a strategy stays drop-a-folder
+  (`strategies/<name>.md` + five `<pos>/<name>.md`), proven by item 7; tool-awareness tuning is the
+  single `tool_catalog.md` file, proven by items 2 and 5.

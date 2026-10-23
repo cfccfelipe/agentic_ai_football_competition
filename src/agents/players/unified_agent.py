@@ -98,6 +98,10 @@ def register(app, my_player_id: int, agent_factory=None):
     last_resort = build_last_resort(fallback_cfg, my_player_id)
     skill_descriptions = plugin_loader.strategy_descriptions()
     known_strategies = plugin_loader.strategy_names()
+    # STATIC base (guardrails + tool catalog) — built ONCE here and captured in
+    # the invoke closure. invoke() never recomposes it; only the per-tick
+    # strategy body is appended (see compose_tick_prompt in PHASE 2).
+    static_base = plugin_loader.build_static_base()
 
     # Fetch MCP tools once at startup; reuse the client per tick.
     transport = _gateway_transport()
@@ -122,6 +126,9 @@ def register(app, my_player_id: int, agent_factory=None):
         prompt_data = parse_prompt(payload)
         team_id = team_id_from(prompt_data, log, position_label)
         try:
+            # --- PHASE 1: resolve position + CONFIRM the strategy (gate) -----
+            # Nothing downstream (skill content, tools) may run until a concrete,
+            # known strategy is settled for this tick.
             game_state = prompt_data.get("gameState", {})
             my_players = prompt_data.get("myPlayers", [my_player_id])
             effective_pid = my_players[0] if my_players else my_player_id
@@ -132,13 +139,29 @@ def register(app, my_player_id: int, agent_factory=None):
                 game_state, team_id, skill_descriptions, hint=hint,
                 known=known_strategies,
             )
+            # GATE: coerce (never assert/raise) an unknown strategy to the
+            # default. An assert here would be swallowed by the broad except
+            # below and stripped under `python -O`; an explicit logged guard
+            # survives both and keeps a known name flowing to PHASE 2.
+            if strategy not in known_strategies:
+                log.warn(
+                    f"{pos}: planner returned unknown strategy {strategy!r}; "
+                    f"using default {constants.DEFAULT_STRATEGY!r}"
+                )
+                strategy = constants.DEFAULT_STRATEGY
 
-            system_prompt = plugin_loader.build_system_prompt(strategy, pos, effective_pid)
+            # --- PHASE 2: drill into THIS position's strategy skill content ---
+            # Only now, with the strategy confirmed, is the dynamic body
+            # appended to the cached static base.
+            system_prompt = plugin_loader.compose_tick_prompt(
+                static_base, strategy, pos, effective_pid
+            )
             state_summary = summarize_state(game_state, team_id, effective_pid, pos)
             log.info(
                 f"{pos} agent: team {team_id}, player {effective_pid}, strategy {strategy}"
             )
 
+            # --- PHASE 3: controlled ReAct within the caps -------------------
             agent = agent_factory(system_prompt=system_prompt, tools=cached_tools)
 
             # Cap agent-loop iterations (model call + tools) per tick and run

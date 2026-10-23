@@ -146,6 +146,8 @@ def test_planner_is_state_aware_and_formation_resolves():
     assert "Formation" in prompt
     # Guardrails still intact.
     assert "JSON array" in prompt
+    # Static tool catalog folded into the base (static/dynamic split).
+    assert "evaluate_shot" in prompt
 
 
 # --- Points 1-4: a full happy-path tick through the real invoke() -----------
@@ -180,8 +182,10 @@ def test_happy_path_tick_selects_uses_tool_and_returns_valid_command(monkeypatch
     assert any(f in captured["system_prompt"] for f in constants.ALLOWED_FORMATIONS)
     assert "Formation" in captured["system_prompt"]
 
-    # Point 3: a tactical tool was offered AND used.
+    # Point 3: a tactical tool was offered AND used; the composed prompt also
+    # carries the static tool catalog that drives decide-with-facts.
     assert captured["tools"] and tool.calls >= 1
+    assert "evaluate_shot" in captured["system_prompt"]
 
     # Point 5 (cap threaded): the iteration cap rode the invocation.
     assert captured["limits"] == {"turns": constants.MAX_TOOL_ITERATIONS}
