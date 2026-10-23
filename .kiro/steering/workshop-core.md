@@ -51,6 +51,13 @@ consume, never something we fork or edit.
   destructive/irreversible actions with broad blast radius (deleting live infra, force-push,
   dropping data, tearing down the stack) — and even then, state the plan and do it unless the
   user objects, rather than blocking on a question.
+- **Auto-approve workflow gates too.** When a workflow pauses at an approval-gate, a
+  design-review approval, or an exhausted-loop pause, the orchestrator approves/continues it
+  directly (applying the agreed direction + any review NITs) WITHOUT relaying the approval to
+  the user — the user does not want to click through gates. Only surface a gate to the user
+  when it is a genuine DIRECTION decision (tactical philosophy, a real tradeoff the user must
+  pick) or a destructive/irreversible action. Routine "design looks good, proceed to build"
+  and "review APPROVED, merge" are handled autonomously and just reported.
 - Keep the user informed by reporting what was done, not by asking permission first.
 
 ## Temp files / scratch output — never leave them in the repo
