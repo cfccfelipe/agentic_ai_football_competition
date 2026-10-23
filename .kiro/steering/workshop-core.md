@@ -20,15 +20,20 @@ consume, never something we fork or edit.
   (`AgentCoreApplication`, `AgentCoreMcp`, …, anything under `node_modules/`), the
   `agentcore.json` contract/schema, Bedrock AgentCore primitives, and the Strands/MCP
   libraries. Read and call them; do not alter them.
-- **Extend (our code, on top):** `src/agents/players/agentcore/cdk/lib/cdk-stack.ts` and
-  `bin/cdk.ts` (our thin wrapper over the vended L3 — add resources here via the aws-cdk-lib
-  CDK escape hatch, e.g. `CfnGuardrail`), our agents/plugins/commons, and anything the
-  registry discovers by convention (drop-a-folder strategies). New capability is an
-  additive extension, not a patch to the given package.
-- **Forbidden:** editing anything under `node_modules/`, forking/patching the vended CDK,
-  or adding bespoke fields to the `agentcore.json` schema. If a feature cannot be built by
-  reusing + extending without altering the given package, STOP and raise it — do not modify
-  what the workshop provided.
+- **Extend (our code, on top):** our agents, `src/commons/`, `src/plugins/` (including
+  registry-discovered drop-a-folder strategies), `src/governance/`, `deploy_all.py` /
+  `destroy_all.py` and our own helper scripts. New capability is an additive extension in
+  OUR code, not a patch to the given package.
+- **Forbidden — the entire `cdk/` folder is OFF-LIMITS.** Do NOT edit ANYTHING under
+  `src/agents/players/agentcore/cdk/` (that includes `lib/cdk-stack.ts`, `bin/cdk.ts`,
+  `cdk.json`, `package.json`, tests) — the whole CDK tree is part of the GIVEN workshop
+  package. Also forbidden: anything under `node_modules/`, forking/patching the vended CDK,
+  and the `agentcore.json` schema/contract. Reading these is fine; editing them is not.
+- **Consequence for new AWS resources (e.g. a Bedrock Guardrail):** since we cannot add
+  resources through `cdk/`, create them from OUR OWN code instead — boto3/AWS CLI in
+  `deploy_all.py` or a dedicated helper script, gated behind a flag, with ids passed to the
+  runtimes via the `.env` env-var mechanism. If a feature truly cannot be built without
+  editing `cdk/` or the given package, STOP and raise it rather than touching them.
 
 ## Autonomy — act, don't ask (this workspace)
 - The user has authorized acting without step-by-step approval in this workspace. Proceed
