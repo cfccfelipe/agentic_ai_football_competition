@@ -11,11 +11,13 @@ reused; only the Agent object is rebuilt per tick with the fresh prompt.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sys
 
 # --- commons/ bootstrap (shared kernel: state, parsing, fallback, agent_base, _bootstrap) ---
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "commons"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "commons"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "commons"))
 from _bootstrap import setup_commons_path  # noqa: E402
@@ -43,6 +45,7 @@ from fallback import (  # noqa: E402
 import constants  # noqa: E402
 import planner  # noqa: E402
 import plugin_loader  # noqa: E402
+from runtime_guards import wrap_tool_with_timeout  # noqa: E402
 
 FALLBACK_CONFIGS = {
     "GK": GK_CONFIG, "DEF": DEF_CONFIG, "MID": MID_CONFIG,
@@ -50,6 +53,12 @@ FALLBACK_CONFIGS = {
 }
 
 GATEWAY_ENV = "AGENTCORE_GATEWAY_TACTICAL_TOOLS_URL"
+
+
+def _default_agent_factory(system_prompt: str, tools):
+    """Build a Nova Micro agent for a tick (retries off, optional guardrail)."""
+    model = BedrockModel(**constants.bedrock_model_kwargs())
+    return Agent(model=model, system_prompt=system_prompt, tools=tools)
 
 
 def _gateway_transport():
@@ -64,20 +73,31 @@ def _gateway_transport():
     return lambda: streamablehttp_client(url, headers=headers)
 
 
-def register(app, my_player_id: int):
+def register(app, my_player_id: int, agent_factory=None):
     """Build and register the @app.entrypoint invoke handler for one player.
 
     Three fallback layers, same contract as commons.agent_base:
       1. LLM (with MCP tools) → parsed commands
       2. rule-based fallback for the position
       3. last-resort single command
+
+    Args:
+        app: the AgentCore app exposing @entrypoint + logger.
+        my_player_id: fixed id for this agent (position derived from it).
+        agent_factory: optional callable (system_prompt, tools) -> a
+            Strands-like agent (callable with a prompt and a ``limits`` kwarg).
+            Injected for offline testing; when None, a Nova Micro agent is
+            built per tick with retries disabled and the optional guardrail.
     """
     log = app.logger
+    if agent_factory is None:
+        agent_factory = _default_agent_factory
     position_label = constants.position_for(my_player_id)
     fallback_cfg = FALLBACK_CONFIGS[position_label]
     fallback_fn = build_fallback(fallback_cfg)
     last_resort = build_last_resort(fallback_cfg, my_player_id)
     skill_descriptions = plugin_loader.strategy_descriptions()
+    known_strategies = plugin_loader.strategy_names()
 
     # Fetch MCP tools once at startup; reuse the client per tick.
     transport = _gateway_transport()
@@ -91,7 +111,11 @@ def register(app, my_player_id: int):
             log.warn(f"{position_label}: could not fetch MCP tools ({e}); running without them")
             mcp_client = None
 
-    model = BedrockModel(model_id=constants.MODEL_ID)
+    # Bound every tool call so one slow tool cannot eat the tick budget.
+    cached_tools = [
+        wrap_tool_with_timeout(t, constants.PER_TOOL_TIMEOUT_SECONDS)
+        for t in cached_tools
+    ]
 
     @app.entrypoint
     async def invoke(payload, context):
@@ -105,7 +129,8 @@ def register(app, my_player_id: int):
 
             hint = prompt_data.get("strategy", "auto")
             strategy = planner.select_strategy(
-                game_state, team_id, skill_descriptions, hint=hint
+                game_state, team_id, skill_descriptions, hint=hint,
+                known=known_strategies,
             )
 
             system_prompt = plugin_loader.build_system_prompt(strategy, pos, effective_pid)
@@ -114,13 +139,33 @@ def register(app, my_player_id: int):
                 f"{pos} agent: team {team_id}, player {effective_pid}, strategy {strategy}"
             )
 
-            agent = Agent(model=model, system_prompt=system_prompt, tools=cached_tools)
+            agent = agent_factory(system_prompt=system_prompt, tools=cached_tools)
 
-            if mcp_client is not None:
-                with mcp_client:
-                    response = agent(state_summary)
-            else:
-                response = agent(state_summary)
+            # Cap agent-loop iterations (model call + tools) per tick and run
+            # the blocking call on the default executor under a hard wall-clock
+            # budget. On timeout we fall through to the deterministic fallback
+            # rather than let a slow tick exceed the server decision window.
+            limits = {"turns": constants.MAX_TOOL_ITERATIONS}
+
+            def _call_agent():
+                if mcp_client is not None:
+                    with mcp_client:
+                        return agent(state_summary, limits=limits)
+                return agent(state_summary, limits=limits)
+
+            loop = asyncio.get_running_loop()
+            try:
+                response = await asyncio.wait_for(
+                    loop.run_in_executor(None, _call_agent),
+                    timeout=constants.TICK_TIMEOUT_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                log.warn(
+                    f"{pos} agent: tick exceeded {constants.TICK_TIMEOUT_SECONDS}s, "
+                    "using fallback."
+                )
+                yield json.dumps(fallback_fn(game_state, team_id, effective_pid))
+                return
 
             commands = parse_commands(str(response), team_id, effective_pid)
             if commands:

@@ -11,7 +11,9 @@ build prompts or talk to AgentCore.
 
 from __future__ import annotations
 
-from constants import DEFAULT_STRATEGY, MODEL_ID, STRATEGIES
+import constants
+from constants import DEFAULT_STRATEGY, STRATEGIES
+from runtime_guards import call_with_timeout
 
 
 def _score_for(game_state: dict, team_id: int) -> tuple[int, int]:
@@ -38,10 +40,14 @@ def rule_based_strategy(game_state: dict, team_id: int) -> str:
     return DEFAULT_STRATEGY
 
 
-def _parse_choice(text: str) -> str | None:
-    """Extract a known strategy name from free LLM text."""
+def _parse_choice(text: str, known: tuple[str, ...]) -> str | None:
+    """Extract a known strategy name from free LLM text.
+
+    Matches longest name first so a discovered folder like ``defensive_press``
+    is not misread as its ``defensive`` substring.
+    """
     low = text.lower()
-    for name in STRATEGIES:
+    for name in sorted(known, key=len, reverse=True):
         if name in low:
             return name
     return None
@@ -53,6 +59,7 @@ def select_strategy(
     skill_descriptions: str,
     hint: str = "auto",
     agent_factory=None,
+    known: tuple[str, ...] = STRATEGIES,
 ) -> str:
     """Return the strategy for this tick.
 
@@ -66,11 +73,15 @@ def select_strategy(
             agent (callable with a prompt). Injected for testing; when None,
             a Nova Micro agent is created lazily. If creation or the call
             fails, the rule-based strategy is used.
+        known: the set of selectable strategy names (defaults to the built-in
+            STRATEGIES). Pass the discovered set from
+            plugin_loader.strategy_names() so dropped-in strategy folders are
+            selectable; longest-match-first avoids substring collisions.
 
-    Non-auto hints pass through unchanged (after validation).
+    Non-auto hints pass through unchanged (after validation against ``known``).
     """
     if hint != "auto":
-        return hint if hint in STRATEGIES else DEFAULT_STRATEGY
+        return hint if hint in known else DEFAULT_STRATEGY
 
     my_score, opp_score = _score_for(game_state, team_id)
     game_time = game_state.get("gameTime", 0) or 0
@@ -83,7 +94,12 @@ def select_strategy(
 
     try:
         agent = agent_factory() if agent_factory else _default_agent()
-        choice = _parse_choice(str(agent(prompt)))
+        # Bound by the same per-tick budget as the invoke path: a slow model
+        # must not stall strategy selection — fall through to the rule instead.
+        response = call_with_timeout(
+            lambda: agent(prompt), constants.TICK_TIMEOUT_SECONDS
+        )
+        choice = _parse_choice(str(response), known)
         if choice:
             return choice
     except Exception:
@@ -97,4 +113,4 @@ def _default_agent():
     from strands import Agent
     from strands.models import BedrockModel
 
-    return Agent(model=BedrockModel(model_id=MODEL_ID))
+    return Agent(model=BedrockModel(**constants.bedrock_model_kwargs()))

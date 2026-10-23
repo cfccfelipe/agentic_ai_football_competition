@@ -1,6 +1,7 @@
 ---
 name: defensive
 type: skill
+formation: 3-0-1
 description: >
   Ultra-defensive block. Every player sits deep and protects the goal; forwards track
   back, the GK never leaves its line. Choose this when protecting a lead: winning by 1+

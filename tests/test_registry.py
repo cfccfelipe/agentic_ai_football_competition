@@ -2,6 +2,40 @@
 
 from plugins import registry
 
+DEFAULT_FORMATION = "1-1-1-1"
+
+
+def _write_skill(tmp_path, body):
+    plugin_dir = tmp_path / "custom"
+    plugin_dir.mkdir()
+    (plugin_dir / "skill.md").write_text(body, encoding="utf-8")
+    return registry.discover(plugins_dir=tmp_path)["custom"]
+
+
+def test_formation_parsed_from_flat_frontmatter(tmp_path):
+    meta = _write_skill(
+        tmp_path,
+        "---\nname: custom\ntype: skill\ndescription: x\nformation: 3-0-1\n---\n",
+    )
+    assert meta.formation == "3-0-1"
+
+
+def test_formation_absent_defaults(tmp_path):
+    meta = _write_skill(
+        tmp_path,
+        "---\nname: custom\ntype: skill\ndescription: x\n---\n",
+    )
+    assert meta.formation == DEFAULT_FORMATION
+
+
+def test_formation_folded_scalar_defaults(tmp_path):
+    # A folded `>` scalar is not a valid flat formation -> default.
+    meta = _write_skill(
+        tmp_path,
+        "---\nname: custom\ntype: skill\ndescription: x\nformation: >\n  not-a-formation\n---\n",
+    )
+    assert meta.formation == DEFAULT_FORMATION
+
 
 def test_discovers_all_plugins():
     found = registry.discover()

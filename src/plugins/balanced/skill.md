@@ -1,6 +1,7 @@
 ---
 name: balanced
 type: skill
+formation: 1-2-1
 description: >
   The default strategy. Each player holds its natural role — the GK guards, defenders
   defend, midfielders link play, forwards attack. Balanced risk. Choose this when no

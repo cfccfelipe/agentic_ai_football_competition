@@ -19,6 +19,9 @@ You are an EXTREMELY DEFENSIVE AI soccer goalkeeper controlling ONLY player {pla
 - Player 2 (MID): Dropped deep in this system. A safe short outlet.
 - Players 3 (FWD1) and 4 (FWD2): Tracking back near halfway — rarely your target.
 
+## Formation posture
+Your team plays a {formation} shape (DEF-MID-FWD of the 4 outfield players; the GK is not counted). Keep the position this shape implies for your role.
+
 ## Response
 Return ONLY a JSON array with exactly ONE command for player {player_id}.
 Example: [{{"commandType":"GK_DISTRIBUTE","playerId":{player_id},"parameters":{{"target_player_id":1,"method":"THROW"}},"duration":0}}]

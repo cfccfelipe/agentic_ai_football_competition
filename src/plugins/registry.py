@@ -14,6 +14,14 @@ from pathlib import Path
 
 PLUGINS_DIR = Path(__file__).parent
 
+# Formation defaults mirror src/agents/players/constants.py (the single source
+# of truth). They are re-declared here as plain literals to keep the registry
+# free of a dependency on the agent package (no circular import at discovery).
+_DEFAULT_FORMATION = "1-1-1-1"
+_ALLOWED_FORMATIONS = (
+    "0-4-0", "1-0-3", "1-1-2", "1-1-1-1", "1-2-1", "2-0-2", "2-1-1", "3-0-1",
+)
+
 
 @dataclass(frozen=True)
 class SkillMeta:
@@ -24,6 +32,7 @@ class SkillMeta:
     description: str
     auto_load: bool
     path: Path         # the plugin's directory
+    formation: str     # DEF-MID-FWD outfield shape; defaults to DEFAULT_FORMATION
 
 
 def _parse_frontmatter(text: str) -> dict:
@@ -81,12 +90,16 @@ def _load_meta(plugin_dir: Path) -> SkillMeta | None:
         return None
 
     fm = _parse_frontmatter(skill_file.read_text(encoding="utf-8"))
+    formation = fm.get("formation", _DEFAULT_FORMATION)
+    if formation not in _ALLOWED_FORMATIONS:
+        formation = _DEFAULT_FORMATION
     return SkillMeta(
         name=fm.get("name", plugin_dir.name),
         type=fm.get("type", "skill"),
         description=fm.get("description", ""),
         auto_load=str(fm.get("auto_load", "false")).lower() == "true",
         path=plugin_dir,
+        formation=formation,
     )
 
 

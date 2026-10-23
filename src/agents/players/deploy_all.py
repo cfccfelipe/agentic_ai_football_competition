@@ -100,12 +100,6 @@ def _signal_handler(sig, frame):
     sys.exit(1)
 
 
-signal.signal(signal.SIGINT, _signal_handler)
-signal.signal(signal.SIGTERM, _signal_handler)
-if hasattr(signal, "SIGBREAK"):
-    signal.signal(signal.SIGBREAK, _signal_handler)
-
-
 def resolve_exe(name):
     path = shutil.which(name)
     if path is None:
@@ -145,17 +139,39 @@ def _ignore_pycache(*_):
 STACK_NAME = "AgentCore-TeamUnified-default"
 LOG_GROUP_PREFIX = "/aws/lambda/TeamUnified-"
 
+# Stack statuses that mean the stack is unusable for an in-place UPDATE and must
+# be deleted (along with its orphaned log groups) before a fresh deploy. A stack
+# in any *_COMPLETE success state, or any transient state, is left untouched.
+_CLEANUP_STATUSES = (
+    "ROLLBACK_COMPLETE", "ROLLBACK_FAILED", "CREATE_FAILED", "DELETE_FAILED",
+)
+
+
+def _should_cleanup(status: str | None) -> bool:
+    """True only when the stack is in a failed state or absent.
+
+    A healthy stack (CREATE_COMPLETE/UPDATE_COMPLETE) must be left for an
+    in-place CloudFormation UPDATE — deleting it or its managed log groups would
+    tear down the live runtime ARNs. ``None`` (no stack) is treated as needing
+    cleanup so orphaned log groups from a prior deleted stack are swept.
+    """
+    return status is None or status in _CLEANUP_STATUSES
+
 
 def pre_deploy_cleanup(region: str) -> None:
-    """Make redeploys idempotent.
+    """Make redeploys idempotent WITHOUT touching a healthy stack.
 
     A previous failed deploy can leave two things behind that block a fresh
     `agentcore deploy`:
-      1. A CloudFormation stack stuck in ROLLBACK_COMPLETE (cannot be updated,
-         only deleted).
-      2. Orphaned Lambda log groups (/aws/lambda/TeamUnified-*) that CloudFormation
-         refuses to recreate ("already exists").
-    This removes both so the deploy below always starts from a clean slate.
+      1. A CloudFormation stack stuck in e.g. ROLLBACK_COMPLETE (cannot be
+         updated, only deleted).
+      2. Orphaned Lambda log groups (/aws/lambda/TeamUnified-*) that
+         CloudFormation refuses to recreate ("already exists").
+
+    Both are removed ONLY when the stack is in a failed/absent state
+    (``_should_cleanup``). A healthy stack is left entirely alone — including
+    its managed log groups — so the deploy becomes an in-place UPDATE that keeps
+    the same runtime ARNs and simply publishes a new version.
     """
     print("Pre-deploy cleanup (idempotent)...")
 
@@ -163,7 +179,13 @@ def pre_deploy_cleanup(region: str) -> None:
         "cloudformation", "describe-stacks", "--stack-name", STACK_NAME,
         "--region", region, "--query", "Stacks[0].StackStatus", "--output", "text",
     )
-    if status in ("ROLLBACK_COMPLETE", "ROLLBACK_FAILED", "CREATE_FAILED", "DELETE_FAILED"):
+
+    if not _should_cleanup(status):
+        print(f"  Stack status: {status} (healthy — left as-is for in-place update)")
+        print()
+        return
+
+    if status:
         print(f"  Stack is {status}; deleting it before redeploy...")
         aws_cli("cloudformation", "delete-stack", "--stack-name", STACK_NAME, "--region", region)
         subprocess.run(
@@ -172,9 +194,9 @@ def pre_deploy_cleanup(region: str) -> None:
             capture_output=True, text=True, encoding="utf-8",
         )
         print("  Stack deleted.")
-    elif status:
-        print(f"  Stack status: {status} (left as-is)")
 
+    # Orphan log-group sweep only runs in the failed/absent branch — never for a
+    # healthy stack whose log groups CloudFormation still manages.
     groups_raw = aws_cli(
         "logs", "describe-log-groups", "--log-group-name-prefix", LOG_GROUP_PREFIX,
         "--region", region, "--query", "logGroups[].logGroupName", "--output", "text",
@@ -186,99 +208,130 @@ def pre_deploy_cleanup(region: str) -> None:
     print()
 
 
-print("==========================================")
-print("  Unified AI Team — Deploy Agents + Gateway")
-print("==========================================\n")
-print("This script will, in order:")
-print("  1. Check prerequisites (agentcore, aws, node, cdk, uv)")
-print("  2. Resolve your AWS account + region")
-print("  2b. Pre-deploy cleanup: remove any failed stack + orphaned log groups")
-print("  3. Bootstrap CDK (safe to repeat)")
-print("  4. Stage shared code (commons, plugins, governance, requirements) into each agent")
-print("  5. Deploy 5 runtimes + the tactical-tools gateway via `agentcore deploy`")
-print("  6. Clean up the staged copies (originals remain the source of truth)\n")
-print("Checking prerequisites...")
+def main() -> None:
+    """Run the full deploy flow.
 
-for tool in ["agentcore", "aws", "node", "cdk", "uv"]:
-    check_tool(tool)
+    Guarded behind ``if __name__ == '__main__'`` so importing this module (e.g.
+    in tests) has no side effects — only running it as a script deploys.
+    """
+    global _impl_staged
 
-account_id = aws_cli("sts", "get-caller-identity", "--query", "Account", "--output", "text")
-if not account_id:
-    print("ERROR: Could not resolve AWS account. Check your credentials.")
-    sys.exit(1)
-region = (
-    os.environ.get("AWS_REGION")
-    or os.environ.get("AWS_DEFAULT_REGION")
-    or aws_cli("configure", "get", "region")
-    or "us-east-1"
-)
-print(f"  AWS Account: {account_id}")
-print(f"  AWS Region:  {region}\n")
+    signal.signal(signal.SIGINT, _signal_handler)
+    signal.signal(signal.SIGTERM, _signal_handler)
+    if hasattr(signal, "SIGBREAK"):
+        signal.signal(signal.SIGBREAK, _signal_handler)
 
-pre_deploy_cleanup(region)
+    print("==========================================")
+    print("  Unified AI Team — Deploy Agents + Gateway")
+    print("==========================================\n")
+    print("This script will, in order:")
+    print("  1. Check prerequisites (agentcore, aws, node, cdk, uv)")
+    print("  2. Resolve your AWS account + region")
+    print("  2b. Pre-deploy cleanup: remove any failed stack + orphaned log groups")
+    print("  3. Bootstrap CDK (safe to repeat)")
+    print("  4. Stage shared code (commons, plugins, governance, requirements) into each agent")
+    print("  5. Deploy 5 runtimes + the tactical-tools gateway via `agentcore deploy`")
+    print("  6. Clean up the staged copies (originals remain the source of truth)\n")
+    print("Checking prerequisites...")
 
-targets_file = SCRIPT_DIR / "agentcore" / "aws-targets.json"
-targets = [{"name": "default", "account": account_id, "region": region}]
-existing = json.loads(targets_file.read_text(encoding="utf-8")) if targets_file.exists() else []
-if existing != targets:
-    targets_file.parent.mkdir(parents=True, exist_ok=True)
-    targets_file.write_text(json.dumps(targets, indent=2) + "\n", encoding="utf-8")
-    print(f"  Wrote deploy target to {targets_file.relative_to(SCRIPT_DIR)}\n")
+    for tool in ["agentcore", "aws", "node", "cdk", "uv"]:
+        check_tool(tool)
 
-try:
-    cdk_dir = SCRIPT_DIR / "agentcore" / "cdk"
-    if cdk_dir.is_dir() and not (cdk_dir / "node_modules").is_dir():
-        print("Installing CDK dependencies (npm install)...")
-        run(["npm", "install"], cwd=cdk_dir)
+    account_id = aws_cli("sts", "get-caller-identity", "--query", "Account", "--output", "text")
+    if not account_id:
+        print("ERROR: Could not resolve AWS account. Check your credentials.")
+        sys.exit(1)
+    region = (
+        os.environ.get("AWS_REGION")
+        or os.environ.get("AWS_DEFAULT_REGION")
+        or aws_cli("configure", "get", "region")
+        or "us-east-1"
+    )
+    print(f"  AWS Account: {account_id}")
+    print(f"  AWS Region:  {region}\n")
+
+    # Optional content-safety guardrail (OWN code — NOT the off-limits cdk/).
+    # Only runs when CREATE_BEDROCK_GUARDRAIL is set; otherwise a no-op so a
+    # deploy without guardrail-create permissions is unaffected. The returned
+    # id/version are exported so they flow to the runtimes' environment via the
+    # deploy env mechanism (the runtime reads them from os.environ).
+    import setup_guardrail
+
+    guardrail = setup_guardrail.ensure_guardrail(region=region)
+    if guardrail is not None:
+        guardrail_id, guardrail_version = guardrail
+        os.environ["BEDROCK_GUARDRAIL_ID"] = guardrail_id
+        os.environ["BEDROCK_GUARDRAIL_VERSION"] = guardrail_version
+        print(f"  Bedrock guardrail ready: {guardrail_id} (version {guardrail_version})\n")
+
+    pre_deploy_cleanup(region)
+
+    targets_file = SCRIPT_DIR / "agentcore" / "aws-targets.json"
+    targets = [{"name": "default", "account": account_id, "region": region}]
+    existing = json.loads(targets_file.read_text(encoding="utf-8")) if targets_file.exists() else []
+    if existing != targets:
+        targets_file.parent.mkdir(parents=True, exist_ok=True)
+        targets_file.write_text(json.dumps(targets, indent=2) + "\n", encoding="utf-8")
+        print(f"  Wrote deploy target to {targets_file.relative_to(SCRIPT_DIR)}\n")
+
+    try:
+        cdk_dir = SCRIPT_DIR / "agentcore" / "cdk"
+        if cdk_dir.is_dir() and not (cdk_dir / "node_modules").is_dir():
+            print("Installing CDK dependencies (npm install)...")
+            run(["npm", "install"], cwd=cdk_dir)
+            print()
+
+        print("CDK Bootstrap...")
+        run(["cdk", "bootstrap", f"aws://{account_id}/{region}"])
         print()
 
-    print("CDK Bootstrap...")
-    run(["cdk", "bootstrap", f"aws://{account_id}/{region}"])
-    print()
+        # Stage the pure tool functions into gateway_tools/_impl so the Lambda
+        # wrappers can import them without duplicating any logic.
+        impl_dir = GATEWAY_TOOLS / "_impl"
+        if impl_dir.exists():
+            rmtree(impl_dir)
+        shutil.copytree(SCRIPTS_SRC, impl_dir, ignore=_ignore_pycache())
+        _impl_staged = True
 
-    # Stage the pure tool functions into gateway_tools/_impl so the Lambda
-    # wrappers can import them without duplicating any logic.
-    impl_dir = GATEWAY_TOOLS / "_impl"
-    if impl_dir.exists():
-        rmtree(impl_dir)
-    shutil.copytree(SCRIPTS_SRC, impl_dir, ignore=_ignore_pycache())
-    _impl_staged = True
+        # Stage shared code into each agent directory.
+        for agent in ALL_AGENTS:
+            agent_dir = SCRIPT_DIR / agent
+            if not agent_dir.is_dir():
+                print(f"ERROR: Agent directory not found: {agent_dir}")
+                sys.exit(1)
+            print(f"Preparing: {agent}")
 
-    # Stage shared code into each agent directory.
-    for agent in ALL_AGENTS:
-        agent_dir = SCRIPT_DIR / agent
-        if not agent_dir.is_dir():
-            print(f"ERROR: Agent directory not found: {agent_dir}")
-            sys.exit(1)
-        print(f"Preparing: {agent}")
+            for folder, src in (("commons", COMMONS_SRC), ("plugins", PLUGINS_SRC), ("governance", GOVERNANCE_SRC)):
+                dest = agent_dir / folder
+                if dest.exists():
+                    rmtree(dest)
+                shutil.copytree(src, dest, ignore=_ignore_pycache())
+            for mod in SHARED_MODULES:
+                shutil.copy2(SCRIPT_DIR / mod, agent_dir / mod)
+            shutil.copy2(REQUIREMENTS_SRC, agent_dir / "requirements.txt")
 
-        for folder, src in (("commons", COMMONS_SRC), ("plugins", PLUGINS_SRC), ("governance", GOVERNANCE_SRC)):
-            dest = agent_dir / folder
-            if dest.exists():
-                rmtree(dest)
-            shutil.copytree(src, dest, ignore=_ignore_pycache())
-        for mod in SHARED_MODULES:
-            shutil.copy2(SCRIPT_DIR / mod, agent_dir / mod)
-        shutil.copy2(REQUIREMENTS_SRC, agent_dir / "requirements.txt")
+            _injected.append(agent_dir)
+        print()
 
-        _injected.append(agent_dir)
-    print()
+        print("Deploying via CDK (agentcore deploy)...")
+        run(["agentcore", "deploy", "--yes"], cwd=SCRIPT_DIR,
+            env={**os.environ, "AWS_DEFAULT_REGION": region})
 
-    print("Deploying via CDK (agentcore deploy)...")
-    run(["agentcore", "deploy", "--yes"], cwd=SCRIPT_DIR,
-        env={**os.environ, "AWS_DEFAULT_REGION": region})
+    except subprocess.CalledProcessError:
+        print("\nDeployment failed. Check the output above.")
+        cleanup()
+        sys.exit(1)
+    except Exception as e:
+        print(f"\nUnexpected error: {e}")
+        cleanup()
+        sys.exit(1)
+    else:
+        cleanup()
 
-except subprocess.CalledProcessError:
-    print("\nDeployment failed. Check the output above.")
-    cleanup()
-    sys.exit(1)
-except Exception as e:
-    print(f"\nUnexpected error: {e}")
-    cleanup()
-    sys.exit(1)
-else:
-    cleanup()
+    print("\n==========================================")
+    print("  Deploy complete: 5 runtimes + tactical-tools gateway")
+    print("==========================================")
 
-print("\n==========================================")
-print("  Deploy complete: 5 runtimes + tactical-tools gateway")
-print("==========================================")
+
+if __name__ == "__main__":
+    main()

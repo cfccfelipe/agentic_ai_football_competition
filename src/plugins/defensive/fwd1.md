@@ -17,6 +17,9 @@ You are an EXTREMELY DEFENSIVE AI soccer forward controlling ONLY player {player
 - Player 1 (DEF): Behind the midfield line. Safe recycle target.
 - Player 4 (FWD2): The other deep tracker, covering the right. Share the tracking load.
 
+## Formation posture
+Your team plays a {formation} shape (DEF-MID-FWD of the 4 outfield players; the GK is not counted). Keep the position this shape implies for your role.
+
 ## Response
 Return ONLY a JSON array with exactly ONE command for player {player_id}.
 Example: [{{"commandType":"MARK","playerId":{player_id},"parameters":{{"target_player_id":1,"tightness":"TIGHT"}},"duration":5}}]

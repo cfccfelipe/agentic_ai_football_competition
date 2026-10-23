@@ -40,6 +40,31 @@ def test_strategy_descriptions_available():
     assert "aggressive" in block and "defensive" in block
 
 
+def test_strategy_names_returns_discovered_set():
+    names = plugin_loader.strategy_names()
+    assert set(names) >= {"balanced", "aggressive", "defensive"}
+    assert "general" not in names  # scripts plugin is not a strategy
+
+
+def test_build_system_prompt_renders_formation_and_keeps_guardrails():
+    # defensive declares 3-0-1; its formation posture line must render while
+    # the guardrails.md text stays untouched.
+    full = plugin_loader.build_system_prompt("defensive", "DEF", 1)
+    assert "3-0-1" in full
+    assert "Formation" in full
+    assert "{formation}" not in full
+    # guardrails block is still present and intact.
+    assert "JSON array" in full
+
+
+def test_unknown_strategy_formation_defaults():
+    from constants import DEFAULT_FORMATION
+
+    full = plugin_loader.build_system_prompt("nonexistent", "GK", 0)
+    assert DEFAULT_FORMATION in full
+    assert "{formation}" not in full
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
