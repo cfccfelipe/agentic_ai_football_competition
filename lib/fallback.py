@@ -2,6 +2,17 @@
 
 Each position defines a FallbackConfig, and build_fallback() returns a
 fallback_commands(game_state, team_id, my_player_id) function.
+
+Tactical skill integrations
+---------------------------
+- threat.py     : DEF/GK fallback marks the highest-threat opponent rather
+                  than simply the one closest to the goal.
+- set_pieces.py : All positions override their MOVE_TO target during set
+                  pieces so rule-based players sprint to the right spot.
+- tactics.py    : Default MOVE_TO positions use the formation home zone
+                  instead of hardcoded x_factor values.
+- stamina.py    : Pressing intensity and sprint decisions are scaled by the
+                  player's current stamina relative to game time.
 """
 
 from __future__ import annotations
@@ -149,10 +160,11 @@ def build_fallback(cfg: FallbackConfig) -> Callable[[dict, int, int], list[dict]
     """Return a fallback_commands(game_state, team_id, my_player_id) function."""
 
     def fallback_commands(game_state: dict, team_id: int, my_player_id: int) -> list[dict]:
-        ball = game_state.get("ball", {})
-        ball_pos = ball.get("position", {"x": 0, "y": 0})
-        players = game_state.get("players", [])
-        possession_id = _possession_idx(ball)
+        ball      = game_state.get("ball", {})
+        ball_pos  = ball.get("position", {"x": 0, "y": 0})
+        players   = game_state.get("players", [])
+        game_time = float(game_state.get("gameTime", 0))
+        score     = game_state.get("score", {})
         my_goal_x, opp_goal_x = get_goal_positions(team_id)
 
         me = next(
@@ -162,21 +174,64 @@ def build_fallback(cfg: FallbackConfig) -> Callable[[dict, int, int], list[dict]
         if not me:
             return [_cmd("SET_STANCE", my_player_id, team_id, {"stance": cfg.default_stance})]
 
-        pos = me.get("position", {"x": 0, "y": 0})
+        pos   = me.get("position", {"x": 0, "y": 0})
+        stam  = me.get("stamina", 1.0)
+
+        # ---- Skill 4: stamina-aware press intensity + sprint ----------------
+        effective_press_intensity = cfg.press_intensity
+        effective_sprint          = True
+        try:
+            from stamina import stamina_context
+            stam_ctx = stamina_context(stam, game_time)
+            effective_press_intensity = stam_ctx.press_intensity
+            effective_sprint          = stam_ctx.sprint_ok
+        except ImportError:
+            pass
+
+        # ---- Skill 5: set-piece position override ---------------------------
+        try:
+            from set_pieces import detect_set_piece
+            sp_info = detect_set_piece(game_state, team_id)
+            if sp_info:
+                sp_pos = sp_info.positions.get(my_player_id)
+                if sp_pos:
+                    # Only MOVE_TO the set-piece position if we don't have the ball
+                    if not holder_is_me(ball, players, team_id, my_player_id):
+                        tx, ty = sp_pos
+                        return [_cmd("MOVE_TO", my_player_id, team_id,
+                                     {"target_x": tx, "target_y": ty,
+                                      "sprint": effective_sprint})]
+        except ImportError:
+            pass
 
         # --- We have the ball ---
         if holder_is_me(ball, players, team_id, my_player_id):
-            return _on_ball(cfg, game_state, players, team_id, my_player_id, pos, my_goal_x, opp_goal_x)
+            return _on_ball(cfg, game_state, players, team_id, my_player_id,
+                            pos, my_goal_x, opp_goal_x)
 
-        # --- DEF: mark dangerous opponent ---
+        # ---- Skill 3: threat-aware marking for DEF/GK -----------------------
         if cfg.mark_threshold > 0:
-            opponents = [p for p in players if not _is_my_team(p, team_id)]
-            if opponents:
-                dangerous = min(opponents, key=lambda p: abs(p.get("position", {}).get("x", 0) - my_goal_x))
-                if abs(dangerous.get("position", {}).get("x", 0) - my_goal_x) < cfg.mark_threshold:
-                    return [_cmd("MARK", my_player_id, team_id,
-                                 {"target_player_id": _player_idx(dangerous),
-                                  "tightness": cfg.mark_tightness}, duration=3)]
+            try:
+                from threat import assess_threats
+                threats = assess_threats(game_state, team_id)
+                if threats:
+                    top = threats[0]
+                    if (not top.is_marked
+                            and top.distance_to_goal < cfg.mark_threshold
+                            and top.score >= 0.4):
+                        return [_cmd("MARK", my_player_id, team_id,
+                                     {"target_player_id": top.player_id,
+                                      "tightness": cfg.mark_tightness}, duration=3)]
+            except ImportError:
+                # Fallback to original distance-only logic
+                opponents = [p for p in players if not _is_my_team(p, team_id)]
+                if opponents:
+                    dangerous = min(opponents,
+                                    key=lambda p: abs(p.get("position", {}).get("x", 0) - my_goal_x))
+                    if abs(dangerous.get("position", {}).get("x", 0) - my_goal_x) < cfg.mark_threshold:
+                        return [_cmd("MARK", my_player_id, team_id,
+                                     {"target_player_id": _player_idx(dangerous),
+                                      "tightness": cfg.mark_tightness}, duration=3)]
 
         # --- Teammate has ball → support run (forwards) ---
         if cfg.possession_action in ("SHOOT_OR_ADVANCE",):
@@ -184,18 +239,22 @@ def build_fallback(cfg: FallbackConfig) -> Callable[[dict, int, int], list[dict]
             if we_have_ball:
                 return [_cmd("MOVE_TO", my_player_id, team_id,
                              {"target_x": opp_goal_x * cfg.support_x_factor,
-                              "target_y": cfg.support_y, "sprint": cfg.support_sprint})]
+                              "target_y": cfg.support_y, "sprint": effective_sprint})]
 
         # --- Press if close to ball and opponent has it ---
         _, _, we_have_ball = get_possession_info(ball, players, team_id)
         if not we_have_ball and dist(pos, ball_pos) < cfg.press_distance:
             return [_cmd("PRESS_BALL", my_player_id, team_id,
-                         {"intensity": cfg.press_intensity}, duration=cfg.press_duration)]
+                         {"intensity": effective_press_intensity},
+                         duration=cfg.press_duration)]
 
-        # --- Default position ---
-        tx, ty = _default_pos(cfg, my_goal_x, opp_goal_x, ball_pos)
+        # ---- Skill 2: tactics-aware default position ------------------------
+        tx, ty = _tactical_default_pos(
+            cfg, my_goal_x, opp_goal_x, ball_pos,
+            my_player_id, team_id, score, game_time,
+        )
         return [_cmd("MOVE_TO", my_player_id, team_id,
-                      {"target_x": tx, "target_y": ty, "sprint": False})]
+                     {"target_x": tx, "target_y": ty, "sprint": False})]
 
     return fallback_commands
 
@@ -255,7 +314,7 @@ def _on_ball(cfg, game_state, players, team_id, my_player_id, pos, my_goal_x, op
 
 
 def _default_pos(cfg, my_goal_x, opp_goal_x, ball_pos):
-    """Calculate default x,y from config."""
+    """Calculate default x,y from config (original hardcoded logic)."""
     if cfg.default_x_ref == "my_goal":
         tx = my_goal_x * cfg.default_x_factor
     elif cfg.default_x_ref == "opp_goal":
@@ -273,3 +332,32 @@ def _default_pos(cfg, my_goal_x, opp_goal_x, ball_pos):
         ty = cfg.default_y
 
     return tx, ty
+
+
+def _tactical_default_pos(
+    cfg,
+    my_goal_x: float,
+    opp_goal_x: float,
+    ball_pos: dict,
+    my_player_id: int,
+    team_id: int,
+    score: dict,
+    game_time: float,
+) -> tuple[float, float]:
+    """Skill 2: Use tactics.py formation home zone when available, else fall back."""
+    try:
+        from game_phase import detect_phase, GamePhase
+        from tactics import get_formation, get_player_home
+
+        # Build a minimal game_state dict for phase detection
+        _gs = {"score": score, "gameTime": game_time, "playMode": "OPEN_PLAY", "ball": {}, "players": []}
+        phase = detect_phase(_gs, team_id)
+        formation = get_formation(team_id, score, game_time, phase)
+        home = get_player_home(formation, my_player_id)
+        if home:
+            return home
+    except (ImportError, Exception):
+        pass
+
+    # Original logic as fallback
+    return _default_pos(cfg, my_goal_x, opp_goal_x, ball_pos)

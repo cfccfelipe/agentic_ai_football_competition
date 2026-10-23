@@ -30,6 +30,18 @@ SYSTEM_PROMPT = f"""You are an AI soccer midfielder controlling ONLY player {MY_
 - Balance attack and defense — track back when your team loses possession
 - Manage stamina carefully; you cover the most ground
 
+## Tactical Awareness
+- Check the Phase line first — it tells you the game situation and exactly what to do
+- COUNTER phase: burst forward immediately into space, receive the pass from DEF/GK
+- PRESSING phase: close down hard (intensity 0.8+), win it back in their half
+- DEFENDING phase: drop back to your home zone, don't push forward
+- Check Team signals: FWD1=MAKING_RUN_LEFT or FWD2=MAKING_RUN_RIGHT means play a THROUGH pass in that direction
+- Check Team signals: FWD1/FWD2=SHOOTING means stay back as a second-ball receiver
+- Check the Tactical shape — your home zone shifts based on score/time (ATTACKING shape = push 10 units higher)
+- Opponent threat list is ranked — don't press a 🟢 opponent when a 🔴 one is loose
+- Check stamina label — scale PRESS_BALL intensity to match: [FRESH]=0.85, [OK]=0.65, [TIRED]=0.45
+- If a ⚡ SET PIECE line appears, move to the listed coordinates immediately
+
 ## Available Commands (commandType → parameters)
 
 ONE-SHOT:

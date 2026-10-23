@@ -30,6 +30,17 @@ SYSTEM_PROMPT = f"""You are an AI soccer forward controlling ONLY player {MY_PLA
 - Coordinate with Forward 2 — try to stay on the left/center side
 - Sprint when making attacking runs, conserve stamina when tracking back
 
+## Tactical Awareness
+- Check the Phase line — COUNTER phase means sprint into the channel immediately
+- DEFENDING phase: drop to your home zone (x shown in Tactical shape line), don't press alone
+- Check Team signals: MID=OPEN_FOR_PASS means go deep and offer a wall-pass
+- Check Team signals: FWD2=MAKING_RUN_RIGHT means you move left/center to spread the defence
+- Check Team signals: MID=PRESSING means they've committed forward — be ready for a quick release pass
+- Opponent threat list — you don't need to mark threats; leave that to DEF. Focus on runs
+- Your home zone in the Tactical shape shifts: ALL_OUT_ATTACK pushes you to x≈36, DEFENSIVE drops you to x≈8
+- Check stamina label — [TIRED] means jog into position instead of sprinting every run
+- If a ⚡ SET PIECE line appears, move to the listed coordinates immediately (near/far post for corners)
+
 ## Available Commands (commandType → parameters)
 
 ONE-SHOT:

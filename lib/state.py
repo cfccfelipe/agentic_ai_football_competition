@@ -1,4 +1,14 @@
-"""Game state summarization utilities for AI soccer agents."""
+"""Game state summarization utilities for AI soccer agents.
+
+Enriched with six tactical skill modules that inject situational context into
+the LLM prompt automatically:
+  - game_phase  : named tactical phase (COUNTER, DEFENDING, …) + action hint
+  - threat      : per-opponent threat score so DEF/GK can prioritise
+  - set_pieces  : position overrides + instruction during set pieces
+  - stamina     : contextualised stamina label relative to game time
+  - coordination: teamChat signals from other agents
+  - tactics     : dynamic formation home-zone per player based on score/time
+"""
 
 import math
 
@@ -151,15 +161,61 @@ def summarize_state(
     my_player_id: int,
     position_label: str,
 ) -> str:
-    """Build a concise text summary of the game state for a single-player agent."""
-    ball = game_state.get("ball", {})
-    ball_pos = ball.get("position", {"x": 0, "y": 0})
-    score = game_state.get("score", {})
-    game_time = game_state.get("gameTime", 0)
-    play_mode = game_state.get("playMode", 0)
-    players = game_state.get("players", [])
+    """Build a concise text summary of the game state for a single-player agent.
 
-    my_team = sorted(
+    Integrates all six tactical skills so the LLM receives:
+      - A named game phase with an action hint (game_phase)
+      - Contextualised stamina label (stamina)
+      - Tactical formation home zone (tactics)
+      - Set-piece position override when applicable (set_pieces)
+      - Threat-ranked opponent list (threat)
+      - Teammate coordination signals (coordination)
+    """
+    # ---- lazy imports keep the module importable even when skill modules are
+    #      absent during isolated unit tests.
+    try:
+        from game_phase import detect_phase
+    except ImportError:
+        detect_phase = None  # type: ignore[assignment]
+
+    try:
+        from stamina import stamina_context, format_for_prompt as fmt_stamina
+    except ImportError:
+        stamina_context = None  # type: ignore[assignment]
+        fmt_stamina = None      # type: ignore[assignment]
+
+    try:
+        from tactics import get_formation, format_formation_for_prompt
+    except ImportError:
+        get_formation = None               # type: ignore[assignment]
+        format_formation_for_prompt = None # type: ignore[assignment]
+
+    try:
+        from set_pieces import detect_set_piece, format_set_piece_for_prompt
+    except ImportError:
+        detect_set_piece = None              # type: ignore[assignment]
+        format_set_piece_for_prompt = None   # type: ignore[assignment]
+
+    try:
+        from threat import assess_threats, format_threats_for_prompt
+    except ImportError:
+        assess_threats = None              # type: ignore[assignment]
+        format_threats_for_prompt = None   # type: ignore[assignment]
+
+    try:
+        from coordination import read_intents, format_intents_for_prompt
+    except ImportError:
+        read_intents = None              # type: ignore[assignment]
+        format_intents_for_prompt = None # type: ignore[assignment]
+
+    ball      = game_state.get("ball", {})
+    ball_pos  = ball.get("position", {"x": 0, "y": 0})
+    score     = game_state.get("score", {})
+    game_time = float(game_state.get("gameTime", 0))
+    play_mode = game_state.get("playMode", "OPEN_PLAY")
+    players   = game_state.get("players", [])
+
+    my_team   = sorted(
         [p for p in players if _is_my_team(p, team_id)],
         key=lambda p: _player_idx(p),
     )
@@ -170,61 +226,107 @@ def summarize_state(
 
     me = next((p for p in my_team if _player_idx(p) == my_player_id), None)
     possession_id, ball_status, _ = get_possession_info(ball, players, team_id)
-
     my_goal_x, opp_goal_x = get_goal_positions(team_id)
 
+    # ---- Skill 1: Game phase -------------------------------------------------
+    phase_line = ""
+    phase_obj  = None
+    if detect_phase:
+        phase_obj  = detect_phase(game_state, team_id)
+        phase_line = f"Phase: {phase_obj.phase.value} — {phase_obj.action_hint}"
+
+    # ---- Skill 2: Tactics / formation ----------------------------------------
+    formation_line = ""
+    if get_formation and phase_obj:
+        formation = get_formation(team_id, score, game_time, phase_obj)
+        formation_line = format_formation_for_prompt(formation, my_player_id)  # type: ignore[misc]
+
+    # ---- Skill 5: Set pieces --------------------------------------------------
+    set_piece_line = ""
+    if detect_set_piece:
+        sp_info = detect_set_piece(game_state, team_id)
+        if sp_info:
+            set_piece_line = format_set_piece_for_prompt(sp_info, my_player_id)  # type: ignore[misc]
+
+    # ---- Build header lines --------------------------------------------------
     lines = [
         f"Time: {game_time:.0f}s | Score: {score.get('home',0)}-{score.get('away',0)} | "
         f"Team: {team_id} ({'HOME' if team_id == 0 else 'AWAY'}) | PlayMode: {play_mode}",
         f"Ball: ({ball_pos.get('x',0):.1f}, {ball_pos.get('y',0):.1f}) held by {ball_status}",
         f"Your goal at x={my_goal_x:.0f} | Opponent goal at x={opp_goal_x:.0f}",
-        "",
     ]
 
-    # My player info
+    if phase_line:
+        lines.append(phase_line)
+    if formation_line:
+        lines.append(formation_line)
+    if set_piece_line:
+        lines.append(set_piece_line)
+
+    lines.append("")
+
+    # ---- My player info with Skill 4: Stamina context ------------------------
     if me:
-        pos = me.get("position", {})
-        # Stamina is a 0.0-1.0 fraction (current/max), not a 0-100 integer.
-        # The old default of 100 hid that: had the key ever been missing it
-        # would have rendered as "100" and the mistake would have been
-        # obvious immediately.
-        stam = me.get("stamina", 1.0)
+        pos       = me.get("position", {})
+        stam      = me.get("stamina", 1.0)
         dist_ball = dist(pos, ball_pos)
-        has_ball = holder_is_me(ball, players, team_id, my_player_id)
-        extra = f" distOppGoal={abs(pos.get('x', 0) - opp_goal_x):.1f}" if position_label in ("MID", "FWD1", "FWD2") else ""
+        has_ball  = holder_is_me(ball, players, team_id, my_player_id)
+        extra     = (
+            f" distOppGoal={abs(pos.get('x', 0) - opp_goal_x):.1f}"
+            if position_label in ("MID", "FWD1", "FWD2") else ""
+        )
+
+        stam_annotation = ""
+        if stamina_context and fmt_stamina:
+            stam_ctx = stamina_context(stam, game_time)
+            stam_annotation = " " + fmt_stamina(stam_ctx)
+
         lines.append(
             f">>> YOUR PLAYER ({position_label}, id={my_player_id}): "
             f"pos=({pos.get('x',0):.1f},{pos.get('y',0):.1f}) "
-            # :.0f rounded the 0.0-1.0 fraction to a single digit, so the
-            # model only ever saw 0 or 1 — fully rested or exhausted, with
-            # nothing in between.
-            f"stam={stam:.2f} distBall={dist_ball:.1f}{extra} hasBall={has_ball}"
+            f"stam={stam:.2f}{stam_annotation} distBall={dist_ball:.1f}{extra} hasBall={has_ball}"
         )
     lines.append("")
 
-    # Teammates
+    # ---- Teammates -----------------------------------------------------------
     lines.append("Teammates:")
     for p in my_team:
         if _player_idx(p) == my_player_id:
             continue
         pos = p.get("position", {})
         pid = _player_idx(p)
-        role = "GK" if pid == 0 else f"P{pid}"
-        extra = ""
-        if position_label == "MID":
-            extra = f" distOppGoal={abs(pos.get('x', 0) - opp_goal_x):.1f}"
+        role  = "GK" if pid == 0 else f"P{pid}"
+        extra = (
+            f" distOppGoal={abs(pos.get('x', 0) - opp_goal_x):.1f}"
+            if position_label == "MID" else ""
+        )
         lines.append(f"  {role}(id={pid}): ({pos.get('x',0):.1f},{pos.get('y',0):.1f}){extra}")
+
+    # ---- Skill 6: Coordination signals ---------------------------------------
+    if read_intents and format_intents_for_prompt:
+        intents      = read_intents(game_state, team_id)
+        intents_line = format_intents_for_prompt(intents, my_player_id)  # type: ignore[misc]
+        lines.append(intents_line)
 
     lines.append("")
 
-    # Opponents
-    opp_header = "Opponents (defenders to watch):" if position_label in ("FWD1", "FWD2") else "Opponents:"
+    # ---- Skill 3: Threat-ranked opponents ------------------------------------
+    opp_header = "Opponents (threat-ranked):"
     lines.append(opp_header)
-    for p in opponents:
-        pos = p.get("position", {})
-        pid = _player_idx(p)
-        d_goal = abs(pos.get("x", 0) - my_goal_x)
-        d_me = dist(pos, me.get("position", {})) if me else 0
-        lines.append(f"  P{pid}: ({pos.get('x',0):.1f},{pos.get('y',0):.1f}) distToMyGoal={d_goal:.1f} distToMe={d_me:.1f}")
+
+    if assess_threats and format_threats_for_prompt:
+        threats = assess_threats(game_state, team_id)
+        lines.append(format_threats_for_prompt(threats))  # type: ignore[misc]
+    else:
+        # Fallback: original flat list
+        for p in opponents:
+            pos   = p.get("position", {})
+            pid   = _player_idx(p)
+            d_goal = abs(pos.get("x", 0) - my_goal_x)
+            d_me   = dist(pos, me.get("position", {})) if me else 0
+            lines.append(
+                f"  P{pid}: ({pos.get('x',0):.1f},{pos.get('y',0):.1f}) "
+                f"distToMyGoal={d_goal:.1f} distToMe={d_me:.1f}"
+            )
 
     return "\n".join(lines)

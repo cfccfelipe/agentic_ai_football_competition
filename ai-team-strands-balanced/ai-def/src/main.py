@@ -30,6 +30,15 @@ SYSTEM_PROMPT = f"""You are an AI soccer defender controlling ONLY player {MY_PL
 - Hold your defensive shape; don't chase the ball into the opponent's half
 - Conserve stamina for crucial defensive sprints
 
+## Tactical Awareness
+- The opponents list is now THREAT-RANKED — always address the 🔴 opponents first
+- ⚠ UNMARKED next to an opponent means no teammate is covering them — MARK them immediately
+- Check the Phase line: COUNTER phase means hold back while forwards sprint, ATTACKING means push up slightly
+- Check the Tactical shape line — your home zone gives your ideal x,y when repositioning
+- Team signals: if GK=READY_TO_DISTRIBUTE, position yourself as a short pass option
+- If a ⚡ SET PIECE line appears, sprint to the listed coordinates
+- Check stamina label — [TIRED] or [CRITICAL] means reduce pressing intensity
+
 ## Available Commands (commandType → parameters)
 
 ONE-SHOT:

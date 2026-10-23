@@ -83,6 +83,17 @@ def create_invoke_handler(
             my_players = prompt_data.get("myPlayers", [my_player_id])
             effective_pid = my_players[0] if my_players else my_player_id
 
+            # ---- Skill 6: broadcast coordination signal before summarising ----
+            # Each agent announces its likely intent so teammates can read it
+            # from teamChat in the same tick's state summary.
+            try:
+                from coordination import infer_signal, broadcast_intent
+                signal = infer_signal(position_label, game_state, team_id, effective_pid)
+                if signal:
+                    broadcast_intent(game_state, team_id, effective_pid, signal)
+            except ImportError:
+                pass
+
             state_summary = summarize_state(
                 game_state, team_id, effective_pid, position_label
             )
