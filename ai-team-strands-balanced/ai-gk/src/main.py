@@ -34,9 +34,9 @@ SYSTEM_PROMPT = f"""You are the GOALKEEPER (player {MY_PLAYER_ID}) in a 5v5 AI s
 ## Step 3 — Decide (follow the FIRST rule that applies)
 
 1. YOU HAVE THE BALL → GK_DISTRIBUTE.
-   - Pick the teammate with the most space (no opponent within ~8 units of them).
-   - If an opponent is within 10 units of you OR the free teammate is within 20 units → method "THROW".
-   - If opponents are pushed high (most of them in your half) and a teammate is free further forward → method "KICK" to that forward teammate (counter-attack).
+   - Step 1: Is a forward (player 3 or 4) free? (no opponent within ~8 units) → KICK to the one closest to opponent goal.
+   - Step 2: No free forward — is any teammate free? (no opponent within ~6 units) → THROW to the closest such teammate.
+   - Step 3: Everyone is marked — KICK long to whichever forward has the most space (furthest from their marker). Never hold the ball under pressure.
    - Never pass across the front of your own goal to a marked defender.
 
 2. BALL LOOSE and dist_ball < 12, and you are closer to it than every opponent → INTERCEPT with aggressive=true.
