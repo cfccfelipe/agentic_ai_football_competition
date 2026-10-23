@@ -97,6 +97,7 @@ def register(app, my_player_id: int, agent_factory=None):
     fallback_fn = build_fallback(fallback_cfg)
     last_resort = build_last_resort(fallback_cfg, my_player_id)
     skill_descriptions = plugin_loader.strategy_descriptions()
+    known_strategies = plugin_loader.strategy_names()
 
     # Fetch MCP tools once at startup; reuse the client per tick.
     transport = _gateway_transport()
@@ -128,7 +129,8 @@ def register(app, my_player_id: int, agent_factory=None):
 
             hint = prompt_data.get("strategy", "auto")
             strategy = planner.select_strategy(
-                game_state, team_id, skill_descriptions, hint=hint
+                game_state, team_id, skill_descriptions, hint=hint,
+                known=known_strategies,
             )
 
             system_prompt = plugin_loader.build_system_prompt(strategy, pos, effective_pid)

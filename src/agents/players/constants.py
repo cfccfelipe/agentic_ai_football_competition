@@ -70,6 +70,15 @@ DEFAULT_STRATEGY = "balanced"
 # Valid strategies (must match plugin folder names under src/plugins/).
 STRATEGIES = ("balanced", "aggressive", "defensive")
 
+# Known formations (DEF-MID-FWD distribution of the 4 outfield players; the GK
+# is always fielded and not counted). Mirror of .kiro/steering/game-domain.md.
+ALLOWED_FORMATIONS = (
+    "0-4-0", "1-0-3", "1-1-2", "1-1-1-1", "1-2-1", "2-0-2", "2-1-1", "3-0-1",
+)
+
+# Formation used when a strategy declares none (balanced, staggered).
+DEFAULT_FORMATION = "1-1-1-1"
+
 
 def position_for(player_id: int) -> str:
     """Return the position label for a player id, defaulting to MID."""

@@ -17,6 +17,9 @@ You are an EXTREMELY AGGRESSIVE AI soccer defender controlling ONLY player {play
 - Player 3 (FWD1): Left striker. THROUGH ball target.
 - Player 4 (FWD2): Right striker. THROUGH ball target.
 
+## Formation posture
+Your team plays a {formation} shape (DEF-MID-FWD of the 4 outfield players; the GK is not counted). Keep the position this shape implies for your role.
+
 ## Response
 Return ONLY a JSON array with exactly ONE command for player {player_id}.
 Example: [{{"commandType":"MOVE_TO","playerId":{player_id},"parameters":{{"target_x":30,"target_y":0,"sprint":true}},"duration":0}}]

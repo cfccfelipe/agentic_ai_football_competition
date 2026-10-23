@@ -16,6 +16,9 @@ You are an AI soccer forward controlling ONLY player {player_id} (Forward 1) in 
 - Player 2 (MID): Your supply line. Move to open lanes for their THROUGH balls.
 - Player 4 (FWD2): Your strike partner on the right. Combine for one-twos; don't crowd them.
 
+## Formation posture
+Your team plays a {formation} shape (DEF-MID-FWD of the 4 outfield players; the GK is not counted). Keep the position this shape implies for your role.
+
 ## Response
 Return ONLY a JSON array with exactly ONE command for player {player_id}.
 Example: [{{"commandType":"SHOOT","playerId":{player_id},"parameters":{{"aim_location":"TR","power":0.9}},"duration":0}}]

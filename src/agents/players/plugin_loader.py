@@ -27,23 +27,34 @@ def load_guardrails() -> str:
 
 
 def load_skill_prompt(strategy: str, position_label: str, player_id: int) -> str:
-    """Return the position prompt for a strategy, with {player_id} resolved.
+    """Return the position prompt for a strategy, with {player_id} and
+    {formation} resolved.
 
     Falls back to the default strategy if the requested one is unknown, and to
-    MID if the position file is missing — never raises on a bad tag.
+    MID if the position file is missing — never raises on a bad tag. When the
+    requested strategy is unknown the formation is DEFAULT_FORMATION (the
+    position text still comes from the default strategy's files).
     """
+    from constants import DEFAULT_FORMATION, DEFAULT_STRATEGY
+
     strategies = registry.strategies()
     meta = strategies.get(strategy)
     if meta is None:
-        from constants import DEFAULT_STRATEGY
         meta = strategies[DEFAULT_STRATEGY]
+        formation = DEFAULT_FORMATION
+    else:
+        formation = meta.formation
 
     position_file = meta.path / f"{position_label.lower()}.md"
     if not position_file.is_file():
         position_file = meta.path / "mid.md"
 
     template = position_file.read_text(encoding="utf-8")
-    return template.replace("{player_id}", str(player_id))
+    return (
+        template
+        .replace("{player_id}", str(player_id))
+        .replace("{formation}", formation)
+    )
 
 
 def build_system_prompt(strategy: str, position_label: str, player_id: int) -> str:
@@ -56,3 +67,8 @@ def build_system_prompt(strategy: str, position_label: str, player_id: int) -> s
 def strategy_descriptions() -> str:
     """Return the strategy descriptions block for the planner to read."""
     return registry.strategy_descriptions()
+
+
+def strategy_names() -> tuple[str, ...]:
+    """Return the discovered strategy names (the planner's selectable set)."""
+    return tuple(registry.strategies().keys())
