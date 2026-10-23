@@ -1,0 +1,27 @@
+name: CI
+
+# Evaluate the test suite on every push and pull request.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Sync dev dependencies
+        run: uv sync --group dev
+
+      - name: Run tests
+        run: uv run pytest -q

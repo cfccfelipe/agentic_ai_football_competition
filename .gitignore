@@ -1,0 +1,42 @@
+# Secrets / local environment — never commit the real values
+.env
+.env.local
+.env.*.local
+
+# AWS
+.aws/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+uv.lock
+
+# Node / CDK
+node_modules/
+cdk.out/
+dist/
+*.tsbuildinfo
+
+# AgentCore CLI local state / logs / build cache (staged deps — never commit)
+**/agentcore/.cli/
+**/agentcore/.cache/
+**/agentcore/cdk/node_modules/
+**/agentcore/cdk/dist/
+
+# Deploy-time staged copies injected into each agent bundle (originals live in src/)
+src/agents/players/ai-*/commons/
+src/agents/players/ai-*/plugins/
+src/agents/players/ai-*/governance/
+
+# Git worktrees used by background workflows — never commit
+.worktrees/
+
+# Upstream sample code — reference only, not part of our repo
+sample-ai-possibilities/
+
+# OS
+.DS_Store
+Thumbs.db

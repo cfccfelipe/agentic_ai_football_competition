@@ -1,0 +1,28 @@
+[project]
+name = "agentic-ai-football-competition"
+version = "0.1.0"
+description = "Unified dynamic-skill AI football agents"
+requires-python = ">=3.10"
+
+# This repo is a collection of scripts/agents, not an installable package.
+# Tell uv not to build it (otherwise uv tries to package src/ and reorganizes it).
+[tool.uv]
+package = false
+
+[dependency-groups]
+# Development + local tooling, managed by uv. These are NOT the agent runtime
+# deps — each deployed agent declares those in its own requirements.txt, which
+# is what AgentCore's CodeZip build installs.
+dev = [
+    "pytest>=9.0",
+    # Local MCP server (src/mcp_server/server.py). Pinned to v1: the server
+    # uses mcp.server.fastmcp.FastMCP, renamed to MCPServer in mcp 2.x.
+    "mcp[cli]>=1.9.0,<2",
+    # One-time CloudWatch Transaction Search enablement (src/observability).
+    "boto3>=1.34",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
