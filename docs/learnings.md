@@ -45,6 +45,29 @@ traceback at import before touching observability config. Don't guess — get th
 
 ---
 
+## 3b. Path resolution via parents[N] breaks in the flat bundle — resolve SIBLINGS first (recurring!)
+
+**What broke (3rd occurrence of this pattern):** After the static/dynamic prompt redesign,
+the deployed GK crashed at init with
+`FileNotFoundError: /governance/guardrails.md`. plugin_loader resolved governance via
+`_SRC_ROOT = Path(__file__).resolve().parents[2]` then `_SRC_ROOT / "governance"`. In the
+local checkout (src/agents/players/plugin_loader.py) parents[2] = src/, correct. In the
+DEPLOYED bundle, plugin_loader.py sits at /var/task/ (root), so parents[2] walks ABOVE
+/var/task to '/', giving '/governance/guardrails.md' which doesn't exist.
+
+**The rule (same family as #1 and #3):** in the deployed bundle EVERYTHING deploy_all.py
+stages is FLAT at the bundle root — unified_agent.py, plugin_loader.py, commons/, plugins/,
+governance/ are ALL SIBLINGS. Any path to a staged resource must try the SIBLING
+(`Path(__file__).parent / "<name>"`) FIRST, then the local-checkout location — never a fixed
+`parents[N]` that assumes the nested src/ layout. plugin_loader now uses `_resolve_dir()`
+(sibling-first) for governance/ and plugins/.
+
+**Why local tests kept missing it:** local resolution happens to work, so the suite is GREEN
+while the deploy is broken. FIX: tests/test_plugin_loader_bundle_layout.py now builds a fake
+/var/task (resources as siblings) and asserts build_static_base() + load_skill_prompt()
+resolve there. ALWAYS add a bundle-layout simulation test for any new file-path resolution in
+runtime code — a local-only test is blind to the deployed flat layout.
+
 ## 3. `lib/` -> `commons/` rename: the deployed layout is FLAT (siblings), not nested
 
 **What broke:** First deploy after the rename crashed with

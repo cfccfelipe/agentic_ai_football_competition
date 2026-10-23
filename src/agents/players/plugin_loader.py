@@ -11,20 +11,40 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-# src/ root, so `from plugins import registry` resolves.
-_SRC_ROOT = Path(__file__).resolve().parents[2]
+_HERE = Path(__file__).resolve().parent
+
+
+def _resolve_dir(name: str) -> Path:
+    """Locate a staged resource dir (governance/, plugins/) across layouts.
+
+    deploy_all.py stages these as SIBLINGS of this file in the deployed bundle
+    (/var/task/<name>), while the local checkout has them under src/ (two
+    levels up: src/agents/players -> src/<name>). Try the deployed sibling
+    FIRST, then the local-checkout location. Returns the first existing dir,
+    falling back to the sibling path (so a clear FileNotFoundError naming the
+    bundle-relative path surfaces at init if staging is wrong).
+    """
+    sibling = _HERE / name                       # /var/task/<name>  (deployed bundle)
+    src_level = _HERE.parents[1] / name          # src/<name>        (local checkout)
+    for cand in (sibling, src_level):
+        if cand.is_dir():
+            return cand
+    return sibling
+
+
+# src/ root (local) or bundle root (deployed), so `from plugins import registry` resolves.
+_SRC_ROOT = _HERE.parents[1] if (_HERE.parents[1] / "plugins").is_dir() else _HERE
 if str(_SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(_SRC_ROOT))
 
 from plugins import registry  # noqa: E402
 
-GOVERNANCE = _SRC_ROOT / "governance" / "guardrails.md"
-TOOL_CATALOG = _SRC_ROOT / "governance" / "tool_catalog.md"
+_GOVERNANCE_DIR = _resolve_dir("governance")
+GOVERNANCE = _GOVERNANCE_DIR / "guardrails.md"
+TOOL_CATALOG = _GOVERNANCE_DIR / "tool_catalog.md"
 
-# Root of the plugins tree. Resolved from _SRC_ROOT so it matches both the
-# local checkout (src/plugins) and the deployed bundle, where deploy_all.py
-# stages src/plugins as a sibling `plugins/` directory next to unified_agent.py.
-_PLUGINS_ROOT = _SRC_ROOT / "plugins"
+# Root of the plugins tree — sibling in the deployed bundle, src/plugins locally.
+_PLUGINS_ROOT = _resolve_dir("plugins")
 
 
 def load_guardrails() -> str:
