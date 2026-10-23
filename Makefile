@@ -1,4 +1,4 @@
-.PHONY: setup setup-python setup-node setup-cli setup-make test test-mcp deploy destroy monitoring doctor
+.PHONY: setup setup-python setup-node setup-cli setup-make test test-mcp eval deploy destroy monitoring doctor
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PATH injection — GNU Make on Windows launches cmd.exe with a stripped PATH
@@ -53,6 +53,12 @@ test:
 # skills — skills are prompt files the agent reads at runtime.
 test-mcp:
 	uv run python src/mcp_server/server.py
+
+# Offline match-evaluation harness: prints the command-breakdown + agent-
+# performance report and writes a JSON artifact (under %TEMP%\match-eval by
+# default). Fully offline — no AWS, no live model.
+eval:
+	uv run python src/eval/run_eval.py
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Deployment — ONE command puts up EVERYTHING:

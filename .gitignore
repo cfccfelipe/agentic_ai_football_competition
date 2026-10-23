@@ -31,6 +31,9 @@ src/agents/players/ai-*/commons/
 src/agents/players/ai-*/plugins/
 src/agents/players/ai-*/governance/
 
+# Offline match-eval JSON artifacts when written inside the repo for inspection
+docs/eval/output/
+
 # Git worktrees used by background workflows — never commit
 .worktrees/
 
