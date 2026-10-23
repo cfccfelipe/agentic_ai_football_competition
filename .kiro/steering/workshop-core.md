@@ -13,6 +13,16 @@ strategy per tick and call deterministic MCP tools. Our code lives under
 - `ai-team-strands-balanced/` (repo root) belongs to a teammate — never edit/move/delete.
 - `sample-ai-possibilities/` is upstream sample code — reference only, never modify.
 
+## Autonomy — act, don't ask (this workspace)
+- The user has authorized acting without step-by-step approval in this workspace. Proceed
+  directly: commits, pushes, deploys, verification commands, resuming/merging workflows,
+  applying fixes — just do them and report what happened.
+- Do NOT stop to ask "should I proceed?" for routine work. Only pause for genuinely
+  destructive/irreversible actions with broad blast radius (deleting live infra, force-push,
+  dropping data, tearing down the stack) — and even then, state the plan and do it unless the
+  user objects, rather than blocking on a question.
+- Keep the user informed by reporting what was done, not by asking permission first.
+
 ## Temp files / scratch output — never leave them in the repo
 - Do NOT write logs, command dumps, probe output, or scratch files anywhere under the
   repo. No `_tmp_*`, no `*.log`, no throwaway JSON/response files committed or left behind.
