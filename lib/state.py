@@ -292,10 +292,10 @@ def summarize_state(
             dist_to_opp_goal = abs(pos.get("x", 0) - opp_goal_x)
             if dist_to_opp_goal < 35.0:
                 player_y = pos.get("y", 0)
-                if player_y < -3:
-                    hint_aim = "TR or BR (you are left of center — aim far post right)"
-                elif player_y > 3:
-                    hint_aim = "TL or BL (you are right of center — aim far post left)"
+                if player_y > 3:
+                    hint_aim = "TR or BR (you are above center — aim far post right)"
+                elif player_y < -3:
+                    hint_aim = "TL or BL (you are below center — aim far post left)"
                 else:
                     hint_aim = "TL or TR (you are central — aim top corners)"
                 shoot_hint = (

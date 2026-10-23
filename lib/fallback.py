@@ -302,24 +302,30 @@ _aim_counter: dict[int, int] = {}   # player_id → cycle index
 def _pick_aim(player_id: int, player_y: float) -> str:
     """Choose an aim corner based on player position and a rotation counter.
 
-    - Players to the left of goal (y < -3) aim at the far post → right corners.
-    - Players to the right of goal (y > 3) aim at the far post → left corners.
-    - Central players rotate through all four corners.
-    The cycle prevents the GK from reading a fixed pattern.
+    aim_location is from the ATTACKER's perspective looking at the goal:
+    - TL = top-left  (upper, y+ side of goal)
+    - TR = top-right (upper, y- side of goal)
+    - BL = bottom-left  (lower, y+ side)
+    - BR = bottom-right (lower, y- side)
+
+    Far-post rule: aim to the side of the goal furthest from the attacker —
+    harder for the keeper to reach.
+    - Player above center (y > 3):  near post = left (y+),  far post = right → TR or BR
+    - Player below center (y < -3): near post = right (y-), far post = left  → TL or BL
+    - Central: rotate top corners TL/TR, occasionally low
     """
     idx = _aim_counter.get(player_id, 0)
     _aim_counter[player_id] = (idx + 1) % len(_AIM_CYCLE)
-    top, bottom = _AIM_CYCLE[idx]
 
-    # Prefer top corners (harder for GK to reach) unless player is below goal center
-    if player_y < -3:
-        # Left of goal → favor right side (far post)
+    if player_y > 3:
+        # Above center → far post is right side → TR or BR (prefer top)
         return "TR" if idx % 2 == 0 else "BR"
-    elif player_y > 3:
-        # Right of goal → favor left side (far post)
+    elif player_y < -3:
+        # Below center → far post is left side → TL or BL (prefer top)
         return "TL" if idx % 2 == 0 else "BL"
     else:
-        # Central → pure rotation, prefer top
+        # Central — rotate through top corners
+        top, _ = _AIM_CYCLE[idx]
         return top
 
 
