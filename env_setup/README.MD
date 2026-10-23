@@ -20,7 +20,7 @@ pip install boto3
 
 AWS_PROFILE=my-profile \
 AWS_REGION=us-east-1 \
-python enable_transaction_search.py
+python observability.py
 ```
 Or using existing environment credentials:
 ```
