@@ -19,6 +19,13 @@ TICK_TIMEOUT_SECONDS = 3.5
 MAX_TOOL_ITERATIONS = 2
 # Per-MCP-tool wall-clock budget so one slow tool cannot eat the tick budget.
 PER_TOOL_TIMEOUT_SECONDS = 1.0
+# Wall-clock budget for the ONE-TIME startup fetch of MCP tools from the
+# gateway. The AgentCore runtime must finish initialization within ~30s or it
+# is killed ("Runtime initialization time exceeded"). A slow/unreachable
+# gateway must NOT hang init: if the fetch exceeds this, the agent starts with
+# NO tools (LLM + deterministic fallback still work) rather than failing to
+# initialize. Kept well under the 30s init ceiling.
+TOOL_FETCH_TIMEOUT_SECONDS = 8.0
 
 
 def guardrail_id() -> str | None:
