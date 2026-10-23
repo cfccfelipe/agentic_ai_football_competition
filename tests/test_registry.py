@@ -39,7 +39,26 @@ def test_formation_folded_scalar_defaults(tmp_path):
 
 def test_discovers_all_plugins():
     found = registry.discover()
-    assert set(found) >= {"general", "balanced", "aggressive", "defensive"}
+    # strategy metadata (strategies/*.md) + scripts plugin + five position indexes
+    assert set(found) >= {
+        "general",
+        "balanced",
+        "aggressive",
+        "defensive",
+        "gk",
+        "def",
+        "mid",
+        "fwd1",
+        "fwd2",
+    }
+
+
+def test_position_indexes_are_not_strategies():
+    # The per-position skill.md indexes use `type: position`; the registry must
+    # never surface them as selectable strategies.
+    strats = registry.strategies()
+    for pos in ("gk", "def", "mid", "fwd1", "fwd2"):
+        assert pos not in strats
 
 
 def test_general_is_scripts_and_autoload():

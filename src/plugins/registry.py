@@ -28,7 +28,7 @@ class SkillMeta:
     """Metadata for one plugin, parsed from its skill.md frontmatter."""
 
     name: str
-    type: str          # "skill" | "scripts"
+    type: str          # "strategy" | "position" | "scripts"
     description: str
     auto_load: bool
     path: Path         # the plugin's directory
@@ -83,35 +83,53 @@ def _parse_frontmatter(text: str) -> dict:
     return result
 
 
+# The folder holding one frontmatter file per strategy (name/formation/
+# description). Its files are discovered individually, not as a skill.md plugin.
+_STRATEGIES_DIRNAME = "strategies"
+
+
+def _meta_from_frontmatter(md_file: Path, fallback_name: str) -> SkillMeta:
+    """Build a SkillMeta from a markdown file's frontmatter block."""
+    fm = _parse_frontmatter(md_file.read_text(encoding="utf-8"))
+    formation = fm.get("formation", _DEFAULT_FORMATION)
+    if formation not in _ALLOWED_FORMATIONS:
+        formation = _DEFAULT_FORMATION
+    return SkillMeta(
+        name=fm.get("name", fallback_name),
+        type=fm.get("type", "skill"),
+        description=fm.get("description", ""),
+        auto_load=str(fm.get("auto_load", "false")).lower() == "true",
+        path=md_file.parent,
+        formation=formation,
+    )
+
+
 def _load_meta(plugin_dir: Path) -> SkillMeta | None:
     """Read one plugin's skill.md into a SkillMeta, or None if absent."""
     skill_file = plugin_dir / "skill.md"
     if not skill_file.is_file():
         return None
-
-    fm = _parse_frontmatter(skill_file.read_text(encoding="utf-8"))
-    formation = fm.get("formation", _DEFAULT_FORMATION)
-    if formation not in _ALLOWED_FORMATIONS:
-        formation = _DEFAULT_FORMATION
-    return SkillMeta(
-        name=fm.get("name", plugin_dir.name),
-        type=fm.get("type", "skill"),
-        description=fm.get("description", ""),
-        auto_load=str(fm.get("auto_load", "false")).lower() == "true",
-        path=plugin_dir,
-        formation=formation,
-    )
+    return _meta_from_frontmatter(skill_file, plugin_dir.name)
 
 
 def discover(plugins_dir: Path | None = None) -> dict[str, SkillMeta]:
     """Scan the plugins directory and return {name: SkillMeta} for every plugin.
 
-    A plugin is any immediate subdirectory containing a skill.md.
+    A plugin is any immediate subdirectory containing a skill.md (the per-
+    position index folders and the scripts plugin). In addition, every markdown
+    file inside the ``strategies/`` folder is discovered as its own strategy
+    metadata entry, so dropping ``strategies/<name>.md`` plus the matching
+    position bodies adds a strategy with no code change.
     """
     base = plugins_dir or PLUGINS_DIR
     registry: dict[str, SkillMeta] = {}
     for child in sorted(base.iterdir()):
         if not child.is_dir():
+            continue
+        if child.name == _STRATEGIES_DIRNAME:
+            for md_file in sorted(child.glob("*.md")):
+                meta = _meta_from_frontmatter(md_file, md_file.stem)
+                registry[meta.name] = meta
             continue
         meta = _load_meta(child)
         if meta is not None:
@@ -120,8 +138,14 @@ def discover(plugins_dir: Path | None = None) -> dict[str, SkillMeta]:
 
 
 def strategies(plugins_dir: Path | None = None) -> dict[str, SkillMeta]:
-    """Return only the strategy plugins (type == 'skill')."""
-    return {n: m for n, m in discover(plugins_dir).items() if m.type == "skill"}
+    """Return only the strategy plugins (type == 'strategy').
+
+    Strategy metadata now lives in ``plugins/strategies/<name>.md`` as a single
+    frontmatter block carrying name/formation/description; per-position index
+    files use ``type: position`` and the tactical scripts plugin uses
+    ``type: scripts``, so neither is returned here.
+    """
+    return {n: m for n, m in discover(plugins_dir).items() if m.type == "strategy"}
 
 
 def strategy_descriptions(plugins_dir: Path | None = None) -> str:

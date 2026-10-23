@@ -57,6 +57,22 @@ def test_build_system_prompt_renders_formation_and_keeps_guardrails():
     assert "JSON array" in full
 
 
+def test_mid_aggressive_loads_position_file_and_composes_prompt():
+    # The position prose for a mid + aggressive tick comes from
+    # plugins/mid/aggressive.md; the composed prompt must carry BOTH the
+    # guardrails block and aggressive's 1-0-3 formation line.
+    skill = plugin_loader.load_skill_prompt("aggressive", "MID", 2)
+    assert "midfielder" in skill.lower()
+    assert "player 2" in skill
+    assert "1-0-3" in skill  # aggressive formation substituted into {formation}
+    assert "{formation}" not in skill and "{player_id}" not in skill
+
+    full = plugin_loader.build_system_prompt("aggressive", "MID", 2)
+    assert "JSON array" in full  # guardrails block present
+    assert "1-0-3" in full
+    assert "Formation" in full
+
+
 def test_unknown_strategy_formation_defaults():
     from constants import DEFAULT_FORMATION
 

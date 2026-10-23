@@ -29,9 +29,9 @@ def _position_body(label: str) -> str:
 
 def _good_files(name="high_press_counter", formation="1-0-3", description="Hunt the ball high and counter fast."):
     files = {
-        "skill.md": (
-            f"---\nname: {name}\ntype: skill\nformation: {formation}\n"
-            f"description: {description}\n---\n\n# Strategy\n\nUse all tools from the general plugin.\n"
+        "strategy.md": (
+            f"---\nname: {name}\ntype: strategy\nformation: {formation}\n"
+            f"description: {description}\n---\n"
         ),
     }
     for label in POSITIONS:
@@ -40,12 +40,16 @@ def _good_files(name="high_press_counter", formation="1-0-3", description="Hunt 
 
 
 def _seed_existing(plugins_dir):
-    """Create a couple of existing strategies to collide against."""
+    """Create a couple of existing strategies to collide against.
+
+    Mirrors the position-grouped layout: strategy metadata lives in
+    plugins/strategies/<name>.md.
+    """
+    strategies_dir = plugins_dir / "strategies"
+    strategies_dir.mkdir()
     for name, fm in (("balanced", "1-2-1"), ("defensive", "3-0-1")):
-        d = plugins_dir / name
-        d.mkdir()
-        (d / "skill.md").write_text(
-            f"---\nname: {name}\ntype: skill\nformation: {fm}\ndescription: x\n---\n",
+        (strategies_dir / f"{name}.md").write_text(
+            f"---\nname: {name}\ntype: strategy\nformation: {fm}\ndescription: x\n---\n",
             encoding="utf-8",
         )
 
@@ -64,16 +68,29 @@ def test_good_spec_is_written(tmp_path):
         "high_press_counter", _research(files), plugins_dir=plugins
     )
 
-    assert dest == plugins / "high_press_counter"
-    written = {p.name for p in dest.iterdir()}
-    assert written == {"skill.md", "gk.md", "def.md", "mid.md", "fwd1.md", "fwd2.md"}
+    # Metadata landed at plugins/strategies/<name>.md ...
+    assert dest == plugins / "strategies" / "high_press_counter.md"
+    assert dest.is_file()
+    # ... and one body landed in each position folder as <name>.md.
+    for label in POSITIONS:
+        body = plugins / label / "high_press_counter.md"
+        assert body.is_file(), f"missing {label}/high_press_counter.md"
+    # The new strategy is now discoverable by the registry as a strategy.
+    from plugins import registry
+
+    assert "high_press_counter" in registry.strategies(plugins_dir=plugins)
+
+
+def _snapshot(plugins):
+    """Every file path (relative) under the plugins tree, for before/after."""
+    return {p.relative_to(plugins).as_posix() for p in plugins.rglob("*") if p.is_file()}
 
 
 def _assert_rejected(plugins, name, files):
-    before = {p.name for p in plugins.iterdir()}
+    before = _snapshot(plugins)
     with pytest.raises(ValueError):
         discover_strategy.generate(name, _research(files), plugins_dir=plugins)
-    after = {p.name for p in plugins.iterdir()}
+    after = _snapshot(plugins)
     assert after == before, "nothing must be written on a rejected spec"
 
 
@@ -107,8 +124,8 @@ def test_folded_formation_rejected(tmp_path):
     plugins.mkdir()
     _seed_existing(plugins)
     files = _good_files()
-    files["skill.md"] = (
-        "---\nname: high_press_counter\ntype: skill\nformation: >\n  1-0-3\n"
+    files["strategy.md"] = (
+        "---\nname: high_press_counter\ntype: strategy\nformation: >\n  1-0-3\n"
         "description: ok\n---\n"
     )
     _assert_rejected(plugins, "high_press_counter", files)
