@@ -11,7 +11,9 @@ build prompts or talk to AgentCore.
 
 from __future__ import annotations
 
-from constants import DEFAULT_STRATEGY, MODEL_ID, STRATEGIES
+import constants
+from constants import DEFAULT_STRATEGY, STRATEGIES
+from runtime_guards import call_with_timeout
 
 
 def _score_for(game_state: dict, team_id: int) -> tuple[int, int]:
@@ -83,7 +85,12 @@ def select_strategy(
 
     try:
         agent = agent_factory() if agent_factory else _default_agent()
-        choice = _parse_choice(str(agent(prompt)))
+        # Bound by the same per-tick budget as the invoke path: a slow model
+        # must not stall strategy selection — fall through to the rule instead.
+        response = call_with_timeout(
+            lambda: agent(prompt), constants.TICK_TIMEOUT_SECONDS
+        )
+        choice = _parse_choice(str(response))
         if choice:
             return choice
     except Exception:
@@ -97,4 +104,4 @@ def _default_agent():
     from strands import Agent
     from strands.models import BedrockModel
 
-    return Agent(model=BedrockModel(model_id=MODEL_ID))
+    return Agent(model=BedrockModel(**constants.bedrock_model_kwargs()))

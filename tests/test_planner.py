@@ -1,7 +1,9 @@
 """Tests for the planner — strategy selection by hint and by rule."""
 
 import copy
+import time
 
+import constants
 import planner
 from constants import DEFAULT_STRATEGY
 from test_helpers import GAME_STATE
@@ -66,6 +68,28 @@ def test_auto_uses_llm_choice_when_available():
         gs, 0, DESCRIPTIONS, hint="auto", agent_factory=fake_factory
     )
     assert result == "defensive"
+
+
+def test_auto_falls_back_to_rule_when_llm_times_out(monkeypatch):
+    # A strategy call slower than the tick budget must not block: it falls
+    # through to the rule-based path.
+    monkeypatch.setattr(constants, "TICK_TIMEOUT_SECONDS", 0.05)
+
+    def slow_factory():
+        def agent(prompt):
+            time.sleep(1.0)
+            return "defensive"
+        return agent
+
+    gs = _state(home=0, away=1, game_time=75)  # rule would pick aggressive
+    start = time.monotonic()
+    result = planner.select_strategy(
+        gs, 0, DESCRIPTIONS, hint="auto", agent_factory=slow_factory
+    )
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 1.0
+    assert result == "aggressive"
 
 
 if __name__ == "__main__":

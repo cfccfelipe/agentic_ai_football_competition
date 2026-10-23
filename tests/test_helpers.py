@@ -96,12 +96,45 @@ class _FakeMCPClient:
         pass
 
 
+class _FakeAgent:
+    """Minimal stand-in for strands.Agent (callable with a prompt)."""
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def __call__(self, prompt, **kwargs):
+        return "[]"
+
+
+class _FakeBedrockModel:
+    """Minimal stand-in for strands.models.BedrockModel."""
+    def __init__(self, *args, **kwargs):
+        self.kwargs = kwargs
+
+
+def mock_strands_core():
+    """Inject fake top-level `strands` + `strands.models` modules.
+
+    Lets agent modules that `from strands import Agent` / `from strands.models
+    import BedrockModel` import cleanly offline. The real agent is replaced in
+    tests via the injectable agent_factory, so these fakes are never called on
+    the happy path.
+    """
+    strands_mod = sys.modules.get("strands") or type(sys)("strands")
+    strands_mod.Agent = _FakeAgent
+    models_mod = type(sys)("strands.models")
+    models_mod.BedrockModel = _FakeBedrockModel
+
+    sys.modules["strands"] = strands_mod
+    sys.modules["strands.models"] = models_mod
+
+
 def mock_agentcore_gateway():
     """Inject fake bedrock_agentcore + MCP modules for gateway-enabled agents.
 
     Call this INSTEAD of mock_agentcore() when testing gateway agents.
     """
     mock_agentcore()
+    mock_strands_core()
 
     # Mock MCP client modules
     mcp_mod = type(sys)("mcp")
