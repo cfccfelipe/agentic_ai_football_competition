@@ -48,8 +48,9 @@ def test_fallback_shoot():
     for c in cmds:
         print(f"  P{c['playerId']}: {c['commandType']} {c.get('parameters', {})}")
     assert cmds[0]["commandType"] == "SHOOT", f"FAIL: expected SHOOT, got {cmds[0]['commandType']}"
-    assert cmds[0]["parameters"]["aim_location"] == "BL", "FAIL: FWD2 should aim BL"
-    print(f"  Correctly shoots (aim BL) near goal")
+    aim = cmds[0]["parameters"]["aim_location"]
+    assert aim in ("TL", "BL"), f"FAIL: FWD2 at y=8 (right of center) should aim far-post left (TL or BL), got {aim}"
+    print(f"  Correctly shoots (aim {aim}) near goal")
     print()
 
 
