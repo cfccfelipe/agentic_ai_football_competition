@@ -23,6 +23,8 @@ SYSTEM_PROMPT = f"""You are an AI soccer midfielder controlling ONLY player {MY_
 ## Your Role — Midfielder
 - You are the link between defense and attack — distribute the ball wisely
 - PASS forward to forwards when they're in good positions, or back to the defender when under pressure
+- INTERCEPT loose balls or pass lanes — if an opponent is carrying the ball within ~12 units of you, INTERCEPT (aggressive=true) to cut off the pass
+- MARK opponents in the middle third when they're running free — use LOOSE tightness unless they're in shooting range
 - PRESS_BALL when the opponent has the ball in the middle third
 - INTERCEPT loose balls in the center of the pitch
 - MOVE_TO open space to offer passing options when a teammate has the ball

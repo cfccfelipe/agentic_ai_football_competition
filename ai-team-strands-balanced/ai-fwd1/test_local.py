@@ -33,8 +33,8 @@ def test_fallback():
         print(f"  [{ok}] P{pid} T{tid}: {c['commandType']} {c.get('parameters', {})}")
     assert all(c["playerId"] == MY_PLAYER_ID for c in cmds), "FAIL: wrong playerId"
     assert all(c["teamId"] == TEAM_ID for c in cmds), "FAIL: wrong teamId"
-    assert cmds[0]["commandType"] == "MOVE_TO", f"FAIL: expected MOVE_TO, got {cmds[0]['commandType']}"
-    print(f"  Correctly advances toward goal")
+    assert cmds[0]["commandType"] in ("MOVE_TO", "PASS"), f"FAIL: expected MOVE_TO or PASS, got {cmds[0]['commandType']}"
+    print(f"  Correctly {'passes to a better-positioned teammate' if cmds[0]['commandType'] == 'PASS' else 'advances toward goal'}")
     print()
 
 
@@ -53,7 +53,7 @@ def test_fallback_shoot():
 
 
 def test_fallback_press():
-    """Opponent has ball near FWD1 — should PRESS_BALL."""
+    """Opponent has ball near FWD1 — should INTERCEPT or PRESS_BALL."""
     print(f"=== FALLBACK PRESS ({POSITION_LABEL}) ===")
     state = json.loads(json.dumps(GAME_STATE))
     state["ball"]["possessionAgentId"] = "agentId_6"  # opponent has ball
@@ -61,8 +61,9 @@ def test_fallback_press():
     cmds = fallback_commands(state, TEAM_ID, MY_PLAYER_ID)
     for c in cmds:
         print(f"  P{c['playerId']}: {c['commandType']} {c.get('parameters', {})}")
-    assert cmds[0]["commandType"] == "PRESS_BALL", f"FAIL: expected PRESS_BALL, got {cmds[0]['commandType']}"
-    print(f"  Correctly presses nearby ball")
+    assert cmds[0]["commandType"] in ("PRESS_BALL", "INTERCEPT"), \
+        f"FAIL: expected PRESS_BALL or INTERCEPT, got {cmds[0]['commandType']}"
+    print(f"  Correctly applies pressure ({cmds[0]['commandType']}) on nearby ball")
     print()
 
 

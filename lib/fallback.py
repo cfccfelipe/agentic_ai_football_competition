@@ -71,6 +71,11 @@ class FallbackConfig:
     """If > 0, mark the opponent closest to our goal when within this distance."""
     mark_tightness: str = "TIGHT"
 
+    # Intercept: try to intercept when ball is loose/opponent carrying near us
+    intercept_distance: float = 0.0
+    """If > 0, INTERCEPT when ball is within this distance and opponent has it."""
+    intercept_aggressive: bool = True
+
     # Pass target filter (player IDs to exclude from pass targets)
     pass_exclude_ids: list[int] = field(default_factory=list)
 
@@ -91,6 +96,7 @@ class FallbackConfig:
 GK_CONFIG = FallbackConfig(
     possession_action="GK_DISTRIBUTE",
     default_x_factor=0.9, default_x_ref="my_goal", default_y="track_ball",
+    intercept_distance=12.0, intercept_aggressive=False,  # intercept loose balls near box
     default_stance=2,
     last_resort_command_type="SET_STANCE", last_resort_params={"stance": 2},
 )
@@ -99,7 +105,8 @@ DEF_CONFIG = FallbackConfig(
     possession_action="PASS",
     pass_exclude_ids=[0],  # don't pass back to GK
     default_x_factor=0.6, default_x_ref="my_goal", default_y=0,
-    mark_threshold=30.0, mark_tightness="TIGHT",
+    mark_threshold=35.0, mark_tightness="TIGHT",
+    intercept_distance=15.0, intercept_aggressive=True,
     default_stance=2,
     last_resort_command_type="SET_STANCE", last_resort_params={"stance": 2},
 )
@@ -109,6 +116,8 @@ MID_CONFIG = FallbackConfig(
     default_x_factor=0.5, default_x_ref="ball_x", default_y="track_ball_30",
     press_distance=20.0, press_intensity=0.6,
     shoot_threshold=25.0, shoot_aim="TR", shoot_power=0.8,
+    mark_threshold=30.0, mark_tightness="LOOSE",   # mark opponents in midfield
+    intercept_distance=12.0, intercept_aggressive=True,
     default_stance=0,
     last_resort_command_type="PRESS_BALL", last_resort_params={"intensity": 0.5},
     last_resort_duration=3,
@@ -116,12 +125,14 @@ MID_CONFIG = FallbackConfig(
 
 FWD1_CONFIG = FallbackConfig(
     possession_action="SHOOT_OR_ADVANCE",
-    advance_x_factor=0.75, advance_y=-8, advance_sprint=True,   # push deeper before advancing
-    support_x_factor=0.65, support_y=-10, support_sprint=True,  # run into the box, not midfield
-    default_x_factor=0.55, default_x_ref="opp_goal", default_y=-8,  # default pos higher up
+    advance_x_factor=0.75, advance_y=-8, advance_sprint=True,
+    support_x_factor=0.65, support_y=-10, support_sprint=True,
+    default_x_factor=0.55, default_x_ref="opp_goal", default_y=-8,
     press_distance=18.0, press_intensity=0.7,
-    shoot_threshold=30.0,   # shoot from further out
+    shoot_threshold=30.0,
     shoot_aim="TR", shoot_power=0.9,
+    mark_threshold=25.0, mark_tightness="LOOSE",   # press/mark in attacking third
+    intercept_distance=10.0, intercept_aggressive=True,
     default_stance=1,
     last_resort_command_type="PRESS_BALL", last_resort_params={"intensity": 0.6},
     last_resort_duration=3,
@@ -129,12 +140,14 @@ FWD1_CONFIG = FallbackConfig(
 
 FWD2_CONFIG = FallbackConfig(
     possession_action="SHOOT_OR_ADVANCE",
-    advance_x_factor=0.75, advance_y=8, advance_sprint=True,    # push deeper before advancing
-    support_x_factor=0.65, support_y=10, support_sprint=True,   # run into the box, not midfield
-    default_x_factor=0.55, default_x_ref="opp_goal", default_y=8,   # default pos higher up
+    advance_x_factor=0.75, advance_y=8, advance_sprint=True,
+    support_x_factor=0.65, support_y=10, support_sprint=True,
+    default_x_factor=0.55, default_x_ref="opp_goal", default_y=8,
     press_distance=18.0, press_intensity=0.7,
-    shoot_threshold=30.0,   # shoot from further out
+    shoot_threshold=30.0,
     shoot_aim="BL", shoot_power=0.9,
+    mark_threshold=25.0, mark_tightness="LOOSE",   # press/mark in attacking third
+    intercept_distance=10.0, intercept_aggressive=True,
     default_stance=1,
     last_resort_command_type="PRESS_BALL", last_resort_params={"intensity": 0.6},
     last_resort_duration=3,
@@ -211,8 +224,9 @@ def build_fallback(cfg: FallbackConfig) -> Callable[[dict, int, int], list[dict]
             return _on_ball(cfg, game_state, players, team_id, my_player_id,
                             pos, my_goal_x, opp_goal_x)
 
-        # ---- Skill 3: threat-aware marking for DEF/GK -----------------------
-        if cfg.mark_threshold > 0:
+        # ---- Opponent has ball → MARK the most dangerous nearby opp (all positions) --
+        _, _, we_have_ball = get_possession_info(ball, players, team_id)
+        if not we_have_ball and cfg.mark_threshold > 0:
             try:
                 from threat import assess_threats
                 threats = assess_threats(game_state, team_id)
@@ -225,7 +239,6 @@ def build_fallback(cfg: FallbackConfig) -> Callable[[dict, int, int], list[dict]
                                      {"target_player_id": top.player_id,
                                       "tightness": cfg.mark_tightness}, duration=3)]
             except ImportError:
-                # Fallback to original distance-only logic
                 opponents = [p for p in players if not _is_my_team(p, team_id)]
                 if opponents:
                     dangerous = min(opponents,
@@ -235,13 +248,23 @@ def build_fallback(cfg: FallbackConfig) -> Callable[[dict, int, int], list[dict]
                                      {"target_player_id": _player_idx(dangerous),
                                       "tightness": cfg.mark_tightness}, duration=3)]
 
-        # --- Teammate has ball → support run (forwards) ---
+        # --- Teammate has ball → pass option or support run ---
         if cfg.possession_action in ("SHOOT_OR_ADVANCE",):
             _, _, we_have_ball = get_possession_info(ball, players, team_id)
             if we_have_ball:
+                # Offer a pass if we're better positioned than ball holder — stay in lane
                 return [_cmd("MOVE_TO", my_player_id, team_id,
                              {"target_x": opp_goal_x * cfg.support_x_factor,
                               "target_y": cfg.support_y, "sprint": effective_sprint})]
+
+        # --- Intercept: ball loose or opponent carrying it very close to us ---
+        _, _, we_have_ball = get_possession_info(ball, players, team_id)
+        from state import _ball_is_free
+        ball_loose = _ball_is_free(ball) is True
+        if cfg.intercept_distance > 0:
+            if (ball_loose or not we_have_ball) and dist(pos, ball_pos) < cfg.intercept_distance:
+                return [_cmd("INTERCEPT", my_player_id, team_id,
+                             {"aggressive": cfg.intercept_aggressive}, duration=2)]
 
         # --- Press if close to ball and opponent has it ---
         _, _, we_have_ball = get_possession_info(ball, players, team_id)
@@ -374,6 +397,38 @@ def _on_ball(cfg, game_state, players, team_id, my_player_id, pos, my_goal_x, op
             aim = _pick_aim(my_player_id, pos.get("y", 0))
             return [_cmd("SHOOT", my_player_id, team_id,
                          {"aim_location": aim, "power": cfg.shoot_power})]
+
+        # Outside shooting range — pass to a better-positioned teammate if one
+        # is clearly closer to goal and has space (> 5 units from nearest opp).
+        opponents = [p for p in players if not _is_my_team(p, team_id)]
+
+        def _nearest_opp_dist_fwd(player):
+            p_pos = player.get("position", {})
+            if not opponents:
+                return 999.0
+            return min(dist(p_pos, o.get("position", {})) for o in opponents)
+
+        candidates = [
+            p for p in players
+            if _is_my_team(p, team_id)
+            and _player_idx(p) != my_player_id
+            and _player_idx(p) != 0           # not GK
+            and _nearest_opp_dist_fwd(p) > 5.0
+        ]
+        if candidates:
+            # Prefer whoever is closer to the opponent goal than we are
+            my_dist_to_goal = abs(pos.get("x", 0) - opp_goal_x)
+            better = [
+                p for p in candidates
+                if abs(p.get("position", {}).get("x", 0) - opp_goal_x) < my_dist_to_goal - 5
+            ]
+            if better:
+                target = min(better, key=lambda p: abs(p.get("position", {}).get("x", 0) - opp_goal_x))
+                pass_type = "THROUGH" if _player_idx(target) in (3, 4) else "GROUND"
+                return [_cmd("PASS", my_player_id, team_id,
+                             {"target_player_id": _player_idx(target), "type": pass_type})]
+
+        # No better-positioned free teammate — advance with the ball
         return [_cmd("MOVE_TO", my_player_id, team_id,
                      {"target_x": opp_goal_x * cfg.advance_x_factor,
                       "target_y": cfg.advance_y, "sprint": cfg.advance_sprint})]
