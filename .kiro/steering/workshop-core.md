@@ -12,6 +12,14 @@ strategy per tick and call deterministic MCP tools. Our code lives under
 ## Do Not Touch
 - `ai-team-strands-balanced/` (repo root) belongs to a teammate — never edit/move/delete.
 - `sample-ai-possibilities/` is upstream sample code — reference only, never modify.
+## Our runtimes are ALWAYS `TeamUnified_ai_*` (shared account)
+The workshop AWS account (937592087229) is SHARED with other participants. OUR 5 agent
+runtimes are always named with the `TeamUnified_ai_` prefix (`TeamUnified_ai_gk_agent-*`,
+`TeamUnified_ai_def_agent-*`, etc.). Bare `ai_*` runtimes (e.g. `ai_gk_agent-MPug56HQgi`)
+belong to OTHER teams — never inspect, invoke, redeploy, or reason about them as ours. When
+listing runtimes, log groups, versions, or endpoints, ALWAYS filter to the
+`TeamUnified_ai_*` prefix. `make observability` already filters to it.
+
 ## Reuse what they give us; extend on top — never modify the given package
 The guiding principle for everything built on the workshop stack: **REUSE the vendored
 package as-is, EXTEND it with our own code.** The given package is a stable dependency we

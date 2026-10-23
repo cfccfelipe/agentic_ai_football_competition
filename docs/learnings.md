@@ -83,9 +83,12 @@ not mean the endpoint routes to it.
 Several of those were OTHER participants' runtimes in the same shared account
 (937592087229), not ours.
 
-**The rule:** when diagnosing, scope to OUR runtimes (the short `ai_*_agent` names / the
-specific ARNs from our deploy outputs). Don't treat every runtime under the prefix as ours.
-`make observability` should filter to ours to avoid this confusion.
+**The rule:** OUR runtimes are ALWAYS named `TeamUnified_ai_*` (e.g.
+`TeamUnified_ai_gk_agent-rvBkVbGcoH`). Bare `ai_*` runtimes (e.g. `ai_gk_agent-MPug56HQgi`)
+belong to OTHER participants — never inspect/invoke/redeploy them as ours. Always filter
+listings to the `TeamUnified_ai_` prefix. `make observability` now does this automatically.
+This confusion cost real time: an `ai_gk_agent-MPug56HQgi` (someone else's) was mistaken for
+ours and its version/endpoint read as if it were our deploy.
 
 ---
 

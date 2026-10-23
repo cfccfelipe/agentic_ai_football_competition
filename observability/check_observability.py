@@ -41,6 +41,10 @@ except Exception:
     pass
 
 RUNTIME_LG_PREFIX = "/aws/bedrock-agentcore/runtimes"
+# OUR runtimes are ALWAYS named TeamUnified_ai_*. The shared workshop account
+# also contains other participants' runtimes (e.g. bare ai_* names); never
+# treat those as ours. All listings/diagnostics filter to this prefix.
+OUR_RUNTIME_PREFIX = "TeamUnified_ai_"
 
 
 def _region(session: boto3.Session) -> str:
@@ -62,10 +66,20 @@ def check_transaction_search(xray) -> None:
 
 
 def list_runtime_log_groups(logs) -> list[str]:
+    """Return ONLY our runtime log groups (TeamUnified_ai_*).
+
+    The shared workshop account holds other participants' runtimes too; we
+    filter to our prefix so diagnostics never mix in someone else's agents.
+    """
     groups: list[str] = []
     paginator = logs.get_paginator("describe_log_groups")
     for page in paginator.paginate(logGroupNamePrefix=RUNTIME_LG_PREFIX):
-        groups.extend(g["logGroupName"] for g in page.get("logGroups", []))
+        for g in page.get("logGroups", []):
+            name = g["logGroupName"]
+            # log group is /aws/bedrock-agentcore/runtimes/<runtimeId>-DEFAULT
+            runtime_id = name[len(RUNTIME_LG_PREFIX) + 1 :]
+            if runtime_id.startswith(OUR_RUNTIME_PREFIX):
+                groups.append(name)
     return sorted(groups)
 
 
