@@ -32,9 +32,14 @@ SYSTEM_PROMPT = f"""You are an AI soccer forward controlling ONLY player {MY_PLA
 
 ## Shooting Rules — CRITICAL
 - Distance to opponent goal < 30 units AND you have the ball → SHOOT, no exceptions.
-- Aim: mix corners (TL, TR, BL, BR) — avoid CENTER.
-- Power: always 0.85 or higher.
 - Do NOT choose MOVE_TO when you already have the ball in shooting range.
+- Power: always 0.85 or higher.
+- Aim selection (aim_location is relative to the goal face, as the goalkeeper sees it):
+  - If you are LEFT of center (your y < -3): aim TR or BR (far post, harder to reach)
+  - If you are RIGHT of center (your y > 3): aim TL or BL (far post, harder to reach)
+  - If you are CENTRAL (y between -3 and 3): aim TL or TR (top corners)
+  - NEVER aim CENTER — the GK is always there.
+- Watch for the ⚽ SHOOT HINT line — it tells you exactly which corner to use.
 
 ## Tactical Awareness
 - COUNTER phase → sprint forward into the right channel immediately.

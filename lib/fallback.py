@@ -270,6 +270,36 @@ def _cmd(cmd_type: str, pid: int, tid: int, params: dict, duration: int = 0) -> 
             "parameters": params, "duration": duration}
 
 
+# Aim location cycling — vary aim so the GK can't read the pattern.
+# Each tuple is (top_option, bottom_option) chosen by player y-position.
+_AIM_CYCLE = [("TL", "BL"), ("TR", "BR"), ("TL", "BR"), ("TR", "BL")]
+_aim_counter: dict[int, int] = {}   # player_id → cycle index
+
+
+def _pick_aim(player_id: int, player_y: float) -> str:
+    """Choose an aim corner based on player position and a rotation counter.
+
+    - Players to the left of goal (y < -3) aim at the far post → right corners.
+    - Players to the right of goal (y > 3) aim at the far post → left corners.
+    - Central players rotate through all four corners.
+    The cycle prevents the GK from reading a fixed pattern.
+    """
+    idx = _aim_counter.get(player_id, 0)
+    _aim_counter[player_id] = (idx + 1) % len(_AIM_CYCLE)
+    top, bottom = _AIM_CYCLE[idx]
+
+    # Prefer top corners (harder for GK to reach) unless player is below goal center
+    if player_y < -3:
+        # Left of goal → favor right side (far post)
+        return "TR" if idx % 2 == 0 else "BR"
+    elif player_y > 3:
+        # Right of goal → favor left side (far post)
+        return "TL" if idx % 2 == 0 else "BL"
+    else:
+        # Central → pure rotation, prefer top
+        return top
+
+
 def _on_ball(cfg, game_state, players, team_id, my_player_id, pos, my_goal_x, opp_goal_x):
     """Handle possession for all position types."""
     if cfg.possession_action == "GK_DISTRIBUTE":
@@ -315,8 +345,9 @@ def _on_ball(cfg, game_state, players, team_id, my_player_id, pos, my_goal_x, op
 
     if cfg.possession_action == "SHOOT_OR_PASS":
         if abs(pos.get("x", 0) - opp_goal_x) < cfg.shoot_threshold:
+            aim = _pick_aim(my_player_id, pos.get("y", 0))
             return [_cmd("SHOOT", my_player_id, team_id,
-                         {"aim_location": cfg.shoot_aim, "power": cfg.shoot_power})]
+                         {"aim_location": aim, "power": cfg.shoot_power})]
         forwards = [p for p in players if _is_my_team(p, team_id) and _player_idx(p) in (3, 4)]
         if forwards:
             target = min(forwards, key=lambda p: abs(p.get("position", {}).get("x", 0) - opp_goal_x))
@@ -327,8 +358,9 @@ def _on_ball(cfg, game_state, players, team_id, my_player_id, pos, my_goal_x, op
 
     if cfg.possession_action == "SHOOT_OR_ADVANCE":
         if abs(pos.get("x", 0) - opp_goal_x) < cfg.shoot_threshold:
+            aim = _pick_aim(my_player_id, pos.get("y", 0))
             return [_cmd("SHOOT", my_player_id, team_id,
-                         {"aim_location": cfg.shoot_aim, "power": cfg.shoot_power})]
+                         {"aim_location": aim, "power": cfg.shoot_power})]
         return [_cmd("MOVE_TO", my_player_id, team_id,
                      {"target_x": opp_goal_x * cfg.advance_x_factor,
                       "target_y": cfg.advance_y, "sprint": cfg.advance_sprint})]

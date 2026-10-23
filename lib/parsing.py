@@ -116,6 +116,19 @@ def _tag_commands(commands: list, team_id: int, my_player_id: int) -> list[dict]
                     params["target_x"] = _clamp(params["target_x"], -55, 55)
                 if isinstance(params.get("target_y"), (int, float)):
                     params["target_y"] = _clamp(params["target_y"], -35, 35)
+            # Validate SHOOT aim_location — if missing or invalid, default to TR
+            if cmd["commandType"] == "SHOOT":
+                params = cmd.get("parameters", {})
+                valid_aims = {"TL", "TR", "BL", "BR", "CENTER"}
+                aim = params.get("aim_location")
+                if aim not in valid_aims:
+                    params["aim_location"] = "TR"
+                    cmd["parameters"] = params
+                # Clamp power to valid range
+                if isinstance(params.get("power"), (int, float)):
+                    params["power"] = _clamp(params["power"], 0.0, 1.0)
+                elif "power" not in params:
+                    params["power"] = 0.9
             # Ensure PASS/MARK/FOLLOW_PLAYER/GK_DISTRIBUTE/SLIDE_TACKLE have target_player_id
             # NOTE: the SLIDE_TACKLE default of -1 is not a valid per-team
             # index, and the MARK/FOLLOW_PLAYER default of 0 is the opposing

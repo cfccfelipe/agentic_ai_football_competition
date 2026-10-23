@@ -286,10 +286,28 @@ def summarize_state(
             stam_ctx = stamina_context(stam, game_time)
             stam_annotation = " " + fmt_stamina(stam_ctx)
 
+        # Shoot hint — injected when the player has the ball and is in range
+        shoot_hint = ""
+        if has_ball and position_label in ("FWD1", "FWD2", "MID"):
+            dist_to_opp_goal = abs(pos.get("x", 0) - opp_goal_x)
+            if dist_to_opp_goal < 35.0:
+                player_y = pos.get("y", 0)
+                if player_y < -3:
+                    hint_aim = "TR or BR (you are left of center — aim far post right)"
+                elif player_y > 3:
+                    hint_aim = "TL or BL (you are right of center — aim far post left)"
+                else:
+                    hint_aim = "TL or TR (you are central — aim top corners)"
+                shoot_hint = (
+                    f"\n⚽ SHOOT HINT: distOppGoal={dist_to_opp_goal:.1f} — "
+                    f"YOU ARE IN RANGE. SHOOT NOW. Recommended aim: {hint_aim}. Power: 0.9."
+                )
+
         lines.append(
             f">>> YOUR PLAYER ({position_label}, id={my_player_id}): "
             f"pos=({pos.get('x',0):.1f},{pos.get('y',0):.1f}) "
             f"stam={stam:.2f}{stam_annotation} distBall={dist_ball:.1f}{extra} hasBall={has_ball}"
+            f"{shoot_hint}"
         )
     lines.append("")
 
