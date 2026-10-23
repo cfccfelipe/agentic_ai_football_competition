@@ -43,6 +43,13 @@ class FallbackConfig:
     # Shoot threshold (distance to opp goal)
     shoot_threshold: float = 25.0
     shoot_aim: str = "TR"
+    """LAST-RESORT fixed corner, used only when the shooter position is
+    unavailable. The live shoot path picks a SITUATIONAL corner from the
+    shooter's y via pick_shoot_aim() instead of this constant."""
+    shoot_aim_side: str = "R"
+    """Horizontal half of the goal this position favours ('L' or 'R'). Lets
+    FWD1/FWD2 keep distinct flank identities while the vertical half is chosen
+    situationally from the shooter's y."""
     shoot_power: float = 0.9
 
     # Advance with ball (for forwards)
@@ -97,7 +104,7 @@ MID_CONFIG = FallbackConfig(
     possession_action="SHOOT_OR_PASS",
     default_x_factor=0.5, default_x_ref="ball_x", default_y="track_ball_30",
     press_distance=20.0, press_intensity=0.6,
-    shoot_threshold=25.0, shoot_aim="TR", shoot_power=0.8,
+    shoot_threshold=25.0, shoot_aim="TR", shoot_aim_side="R", shoot_power=0.8,
     default_stance=0,
     last_resort_command_type="PRESS_BALL", last_resort_params={"intensity": 0.5},
     last_resort_duration=3,
@@ -109,7 +116,7 @@ FWD1_CONFIG = FallbackConfig(
     support_x_factor=0.5, support_y=-10, support_sprint=True,
     default_x_factor=0.4, default_x_ref="opp_goal", default_y=-8,
     press_distance=20.0, press_intensity=0.7,
-    shoot_aim="TR", shoot_power=0.9,
+    shoot_aim="TL", shoot_aim_side="L", shoot_power=0.9,
     default_stance=1,
     last_resort_command_type="PRESS_BALL", last_resort_params={"intensity": 0.6},
     last_resort_duration=3,
@@ -121,7 +128,7 @@ FWD2_CONFIG = FallbackConfig(
     support_x_factor=0.5, support_y=10, support_sprint=True,
     default_x_factor=0.4, default_x_ref="opp_goal", default_y=8,
     press_distance=20.0, press_intensity=0.7,
-    shoot_aim="BL", shoot_power=0.9,
+    shoot_aim="BR", shoot_aim_side="R", shoot_power=0.9,
     default_stance=1,
     last_resort_command_type="PRESS_BALL", last_resort_params={"intensity": 0.6},
     last_resort_duration=3,
@@ -209,6 +216,24 @@ def _cmd(cmd_type: str, pid: int, tid: int, params: dict, duration: int = 0) -> 
             "parameters": params, "duration": duration}
 
 
+def pick_shoot_aim(shooter_y: float, side: str) -> str:
+    """Pick a SITUATIONAL goal corner (TL/TR/BL/BR) for a fallback shot.
+
+    The goal mouth is centred on y=0. A shooter below centre (y <= 0) aims at a
+    TOP corner, one above centre aims at a BOTTOM corner — placing the ball
+    across the keeper toward the far vertical part of the goal rather than at a
+    blind fixed corner. The horizontal half ('L'/'R') comes from the position's
+    flank preference so FWD1 and FWD2 still differ for the same y.
+
+    This is independent of HOME/AWAY: aim_location is relative to the goal the
+    shot is taken at, and the attacking direction is already encoded upstream by
+    which goal the shooter has advanced on (opp_goal_x from get_goal_positions).
+    """
+    vertical = "T" if shooter_y <= 0 else "B"
+    horizontal = "L" if str(side).upper().startswith("L") else "R"
+    return vertical + horizontal
+
+
 def _on_ball(cfg, game_state, players, team_id, my_player_id, pos, my_goal_x, opp_goal_x):
     """Handle possession for all position types."""
     if cfg.possession_action == "GK_DISTRIBUTE":
@@ -233,7 +258,8 @@ def _on_ball(cfg, game_state, players, team_id, my_player_id, pos, my_goal_x, op
     if cfg.possession_action == "SHOOT_OR_PASS":
         if abs(pos.get("x", 0) - opp_goal_x) < cfg.shoot_threshold:
             return [_cmd("SHOOT", my_player_id, team_id,
-                         {"aim_location": cfg.shoot_aim, "power": cfg.shoot_power})]
+                         {"aim_location": pick_shoot_aim(pos.get("y", 0), cfg.shoot_aim_side),
+                          "power": cfg.shoot_power})]
         forwards = [p for p in players if _is_my_team(p, team_id) and _player_idx(p) in (3, 4)]
         if forwards:
             target = min(forwards, key=lambda p: abs(p.get("position", {}).get("x", 0) - opp_goal_x))
@@ -245,7 +271,8 @@ def _on_ball(cfg, game_state, players, team_id, my_player_id, pos, my_goal_x, op
     if cfg.possession_action == "SHOOT_OR_ADVANCE":
         if abs(pos.get("x", 0) - opp_goal_x) < cfg.shoot_threshold:
             return [_cmd("SHOOT", my_player_id, team_id,
-                         {"aim_location": cfg.shoot_aim, "power": cfg.shoot_power})]
+                         {"aim_location": pick_shoot_aim(pos.get("y", 0), cfg.shoot_aim_side),
+                          "power": cfg.shoot_power})]
         return [_cmd("MOVE_TO", my_player_id, team_id,
                      {"target_x": opp_goal_x * cfg.advance_x_factor,
                       "target_y": cfg.advance_y, "sprint": cfg.advance_sprint})]

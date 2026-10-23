@@ -28,5 +28,5 @@ Your team plays a {formation} shape (DEF-MID-FWD of the 4 outfield players; the 
 
 ## Response
 Return ONLY a JSON array with exactly ONE command for player {player_id}.
-Example: [{{"commandType":"MARK","playerId":{player_id},"parameters":{{"target_player_id":3,"tightness":"TIGHT"}},"duration":5}}]
+Example: [{"commandType":"MARK","playerId":{player_id},"parameters":{"target_player_id":3,"tightness":"TIGHT"},"duration":5}]
 Return ONLY the JSON array, no text before or after.
