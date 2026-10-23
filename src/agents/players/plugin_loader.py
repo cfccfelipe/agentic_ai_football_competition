@@ -92,11 +92,14 @@ def load_skill_prompt(strategy: str, position_label: str, player_id: int) -> str
         resolved_strategy = strategy
         formation = meta.formation
 
-    # Position prose lives in the POSITION folder, grouped by strategy name:
-    # plugins/<position>/<strategy>.md. meta.path now points at plugins/
-    # strategies/, so it is NOT used to locate the body. Unknown position
-    # falls back to MID.
-    position_file = _PLUGINS_ROOT / position_label.lower() / f"{resolved_strategy}.md"
+    # Role prose lives in the ROLE folder, grouped by strategy name:
+    # plugins/<role>/<strategy>.md. The role label maps to its folder via
+    # constants.role_folder so FWD/FWD1/FWD2 all resolve to plugins/fwd/.
+    # meta.path now points at plugins/strategies/, so it is NOT used to locate
+    # the body. Unknown role falls back to MID.
+    from constants import role_folder
+
+    position_file = _PLUGINS_ROOT / role_folder(position_label) / f"{resolved_strategy}.md"
     if not position_file.is_file():
         position_file = _PLUGINS_ROOT / "mid" / f"{resolved_strategy}.md"
 
@@ -139,3 +142,12 @@ def strategy_descriptions() -> str:
 def strategy_names() -> tuple[str, ...]:
     """Return the discovered strategy names (the planner's selectable set)."""
     return tuple(registry.strategies().keys())
+
+
+def strategy_meta(strategy: str):
+    """Return the SkillMeta for a strategy (for its formation), or None.
+
+    Thin pass-through to the registry so the runtime can resolve a strategy's
+    formation (used by formation_roles) without importing the registry directly.
+    """
+    return registry.strategies().get(strategy)

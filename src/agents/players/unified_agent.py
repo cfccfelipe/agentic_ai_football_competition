@@ -39,20 +39,78 @@ from parsing import parse_commands  # noqa: E402
 from state import summarize_state  # noqa: E402
 from fallback import (  # noqa: E402
     build_fallback, build_last_resort,
-    GK_CONFIG, DEF_CONFIG, MID_CONFIG, FWD1_CONFIG, FWD2_CONFIG,
+    GK_CONFIG, DEF_CONFIG, MID_CONFIG, FWD_CONFIG, FWD1_CONFIG, FWD2_CONFIG,
 )
 
 import constants  # noqa: E402
+import formation_roles  # noqa: E402
 import planner  # noqa: E402
 import plugin_loader  # noqa: E402
 from runtime_guards import wrap_tool_with_timeout  # noqa: E402
 
+# Keyed by ROLE label. FWD is the single merged forward config; FWD1/FWD2 remain
+# as transition aliases so any caller still resolves a config.
 FALLBACK_CONFIGS = {
     "GK": GK_CONFIG, "DEF": DEF_CONFIG, "MID": MID_CONFIG,
-    "FWD1": FWD1_CONFIG, "FWD2": FWD2_CONFIG,
+    "FWD": FWD_CONFIG, "FWD1": FWD1_CONFIG, "FWD2": FWD2_CONFIG,
 }
 
 GATEWAY_ENV = "AGENTCORE_GATEWAY_TACTICAL_TOOLS_URL"
+
+
+def _flex_enabled(prompt_data: dict) -> bool:
+    """Whether players 2/3/4 may adapt their role this tick (FLEX flag).
+
+    Reads a per-payload flag first (``prompt_data['flexRoles']``), then the env
+    ``FLEX_ROLES``. Defaults OFF so a deploy's behaviour never changes unless
+    the flag is deliberately set. players 0/1 (GK/DEF) are unaffected either way.
+    """
+    if "flexRoles" in prompt_data:
+        return bool(prompt_data.get("flexRoles"))
+    return str(os.environ.get("FLEX_ROLES", "")).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _team_name_from(prompt_data: dict, team_id) -> str:
+    """Best-effort team NAME for the log prefix, else ''.
+
+    The server does not currently send a team name in a fixed field, so we probe
+    the common shapes (top-level, gameState, a teams list keyed/indexed by team
+    id) and return '' when none is present — the prefix then shows just the team
+    id. Never raises on a surprising shape.
+    """
+    try:
+        gs = prompt_data.get("gameState", {}) or {}
+        for src in (prompt_data, gs):
+            for key in ("teamName", "team_name"):
+                val = src.get(key)
+                if isinstance(val, str) and val.strip():
+                    return val.strip()
+        teams = gs.get("teams") or prompt_data.get("teams")
+        if isinstance(teams, dict):
+            entry = teams.get(str(team_id)) or teams.get(team_id)
+            if isinstance(entry, dict) and isinstance(entry.get("name"), str):
+                return entry["name"].strip()
+            if isinstance(entry, str):
+                return entry.strip()
+        if isinstance(teams, list) and isinstance(team_id, int) and 0 <= team_id < len(teams):
+            entry = teams[team_id]
+            if isinstance(entry, dict) and isinstance(entry.get("name"), str):
+                return entry["name"].strip()
+            if isinstance(entry, str):
+                return entry.strip()
+    except Exception:
+        pass
+    return ""
+
+
+def _log_prefix(team_id, team_name: str, player_id: int, role_label: str) -> str:
+    """Build the per-line log prefix once, e.g. [team0 'Lighting Cloud' pos0 GK].
+
+    Includes the team NAME when available so logs separate teams clearly; falls
+    back to just the team id (team0/team1) otherwise.
+    """
+    name_part = f" '{team_name}'" if team_name else ""
+    return f"[team{team_id}{name_part} pos{player_id} {role_label}]"
 
 
 def _default_agent_factory(system_prompt: str, tools):
@@ -92,10 +150,13 @@ def register(app, my_player_id: int, agent_factory=None):
     log = app.logger
     if agent_factory is None:
         agent_factory = _default_agent_factory
-    position_label = constants.position_for(my_player_id)
-    fallback_cfg = FALLBACK_CONFIGS[position_label]
-    fallback_fn = build_fallback(fallback_cfg)
-    last_resort = build_last_resort(fallback_cfg, my_player_id)
+    # The STARTUP role label (used only for the last-resort crash command, which
+    # must exist even if we never settle a strategy). The per-tick role is
+    # resolved inside invoke() via formation_roles once the formation is known.
+    # players 0/1 are hard-pinned GK/DEF; others default to the base map.
+    startup_role = constants.position_for(my_player_id)
+    startup_cfg = FALLBACK_CONFIGS.get(startup_role, MID_CONFIG)
+    last_resort = build_last_resort(startup_cfg, my_player_id)
     skill_descriptions = plugin_loader.strategy_descriptions()
     known_strategies = plugin_loader.strategy_names()
     # STATIC base (guardrails + tool catalog) — built ONCE here and captured in
@@ -112,7 +173,7 @@ def register(app, my_player_id: int, agent_factory=None):
             with mcp_client:
                 cached_tools = mcp_client.list_tools_sync()
         except Exception as e:  # gateway optional — degrade to no tools
-            log.warn(f"{position_label}: could not fetch MCP tools ({e}); running without them")
+            log.warn(f"[team? pos{my_player_id} {startup_role}] could not fetch MCP tools ({e}); running without them")
             mcp_client = None
 
     # Bound every tool call so one slow tool cannot eat the tick budget.
@@ -124,15 +185,17 @@ def register(app, my_player_id: int, agent_factory=None):
     @app.entrypoint
     async def invoke(payload, context):
         prompt_data = parse_prompt(payload)
-        team_id = team_id_from(prompt_data, log, position_label)
+        team_id = team_id_from(prompt_data, log, f"team?-pos{my_player_id}-{startup_role}")
+        # Build the per-line log prefix ONCE per tick from team id + team NAME
+        # (when the payload provides it) + player id + resolved role (below).
+        team_name = _team_name_from(prompt_data, team_id)
         try:
-            # --- PHASE 1: resolve position + CONFIRM the strategy (gate) -----
+            # --- PHASE 1: resolve role + CONFIRM the strategy (gate) ---------
             # Nothing downstream (skill content, tools) may run until a concrete,
             # known strategy is settled for this tick.
             game_state = prompt_data.get("gameState", {})
             my_players = prompt_data.get("myPlayers", [my_player_id])
             effective_pid = my_players[0] if my_players else my_player_id
-            pos = constants.position_for(effective_pid)
 
             hint = prompt_data.get("strategy", "auto")
             strategy = planner.select_strategy(
@@ -145,20 +208,41 @@ def register(app, my_player_id: int, agent_factory=None):
             # survives both and keeps a known name flowing to PHASE 2.
             if strategy not in known_strategies:
                 log.warn(
-                    f"{pos}: planner returned unknown strategy {strategy!r}; "
-                    f"using default {constants.DEFAULT_STRATEGY!r}"
+                    f"[team{team_id} pos{effective_pid}] planner returned unknown "
+                    f"strategy {strategy!r}; using default {constants.DEFAULT_STRATEGY!r}"
                 )
                 strategy = constants.DEFAULT_STRATEGY
 
-            # --- PHASE 2: drill into THIS position's strategy skill content ---
+            # --- Resolve THIS agent's ROLE for the tick (dynamic roles) ------
+            # formation_roles is the single source of truth: player 0 is always
+            # GK, player 1 always DEF; players 2/3/4 take the chosen formation's
+            # remaining distribution (or may flex when the FLEX flag is on).
+            flex = _flex_enabled(prompt_data)
+            meta = plugin_loader.strategy_meta(strategy)
+            formation = meta.formation if meta is not None else constants.DEFAULT_FORMATION
+            role = formation_roles.formation_roles(formation, flex=flex)[effective_pid]
+            fallback_cfg = FALLBACK_CONFIGS.get(role, MID_CONFIG)
+            fallback_fn = build_fallback(fallback_cfg)
+            prefix = _log_prefix(team_id, team_name, effective_pid, role)
+
+            # --- PHASE 2: drill into THIS role's strategy skill content ------
             # Only now, with the strategy confirmed, is the dynamic body
-            # appended to the cached static base.
+            # appended to the cached static base. FWD-role players resolve to
+            # plugins/fwd/ via plugin_loader -> constants.role_folder.
             system_prompt = plugin_loader.compose_tick_prompt(
-                static_base, strategy, pos, effective_pid
+                static_base, strategy, role, effective_pid
             )
-            state_summary = summarize_state(game_state, team_id, effective_pid, pos)
+            if formation_roles.is_flexible(effective_pid, flex):
+                system_prompt += (
+                    "\n\n---\n\n## Flexible role (think about your best position)\n"
+                    "The FLEX flag is ON for you. The formation suggests you start as "
+                    f"{role}, but you MAY adapt your role within {{DEF, MID, FWD}} for "
+                    "this situation given the strategy — choose the position that helps "
+                    "the team most right now. You are NEVER the goalkeeper."
+                )
+            state_summary = summarize_state(game_state, team_id, effective_pid, role)
             log.info(
-                f"{pos} agent: team {team_id}, player {effective_pid}, strategy {strategy}"
+                f"{prefix} strategy {strategy}, formation {formation}, flex={flex}"
             )
 
             # --- PHASE 3: controlled ReAct within the caps -------------------
@@ -184,7 +268,7 @@ def register(app, my_player_id: int, agent_factory=None):
                 )
             except asyncio.TimeoutError:
                 log.warn(
-                    f"{pos} agent: tick exceeded {constants.TICK_TIMEOUT_SECONDS}s, "
+                    f"{prefix} tick exceeded {constants.TICK_TIMEOUT_SECONDS}s, "
                     "using fallback."
                 )
                 yield json.dumps(fallback_fn(game_state, team_id, effective_pid))
@@ -192,23 +276,32 @@ def register(app, my_player_id: int, agent_factory=None):
 
             commands = parse_commands(str(response), team_id, effective_pid)
             if commands:
-                log.info(f"LLM returned {len(commands)} commands: "
+                log.info(f"{prefix} LLM returned {len(commands)} commands: "
                          f"{[c.get('commandType') for c in commands]}")
                 yield json.dumps(commands)
             else:
-                log.warn("LLM parse failed, using fallback.")
+                log.warn(f"{prefix} LLM parse failed, using fallback.")
                 yield json.dumps(fallback_fn(game_state, team_id, effective_pid))
 
         except Exception as e:
-            log.error(f"{position_label} agent error: {e}")
+            log.error(
+                f"[team{team_id}{(' ' + repr(team_name)) if team_name else ''} "
+                f"pos{my_player_id} {startup_role}] agent error: {e}"
+            )
             try:
                 my_players = prompt_data.get("myPlayers", [my_player_id])
                 effective_pid = my_players[0] if my_players else my_player_id
+                # Role may not have been resolved (error before PHASE 1 finished);
+                # use the startup config as a safe deterministic fallback.
+                crash_fn = build_fallback(FALLBACK_CONFIGS.get(startup_role, MID_CONFIG))
                 yield json.dumps(
-                    fallback_fn(prompt_data.get("gameState", {}), team_id, effective_pid)
+                    crash_fn(prompt_data.get("gameState", {}), team_id, effective_pid)
                 )
             except Exception as fe:
-                log.error(f"{position_label} fallback also failed: {fe}")
+                log.error(
+                    f"[team{team_id} pos{my_player_id} {startup_role}] "
+                    f"fallback also failed: {fe}"
+                )
                 cmd = dict(last_resort)
                 cmd["teamId"] = team_id
                 yield json.dumps([cmd])

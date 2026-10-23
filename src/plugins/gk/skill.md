@@ -17,10 +17,12 @@ team coordination the guardrails require.
 
 ## Strategy files for this position
 
-- `aggressive.md` — formation 1-0-3. Read when the team is chasing (losing by any
-  margin) OR level and going for the win. The GK plays as a sweeper-keeper pushed high.
-- `balanced.md` — formation 1-2-1. The confident default. Read whenever no clear
-  late-lead condition holds: level or slim margin with time left. gameTime is in
+- `aggressive.md` — formation 1-1-2 (one back, one mid, two forward). Read when the team is
+  chasing (losing by any margin) OR level and going for the win. The GK is a PROACTIVE
+  sweeper-keeper but stays inside its defensive third.
+- `balanced.md` — formation 2-1-1 (two defenders, the structured DEFAULT). Read whenever no
+  clear late-lead condition holds: level or slim margin with time left. gameTime is in
   seconds, so ~120s is early, not late. The GK guards and distributes to keep possession.
-- `defensive.md` — formation 3-0-1. Read ONLY when protecting a CLEAR lead LATE in the
-  match (not on a slim or early lead; ~120s is early). The GK stays deep and never leaves its line.
+- `defensive.md` — formation 2-1-1 (a solid two-defender block to protect a lead). Read
+  ONLY when protecting a CLEAR lead LATE in the match (not on a slim or early lead; ~120s is
+  early). The GK stays deep and never leaves its line.

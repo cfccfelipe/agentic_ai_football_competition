@@ -109,8 +109,14 @@ def select_strategy(
 
 
 def _default_agent():
-    """Create a Nova Micro agent for strategy selection (lazy import)."""
+    """Create the PLANNER agent for strategy selection (lazy import).
+
+    Uses PLANNER_MODEL_ID (via constants.planner_model_kwargs) — a stronger
+    model than Nova Micro when one is configured, defaulting to MODEL_ID so a
+    deploy without a confirmed stronger model is unchanged. Execution agents
+    keep using MODEL_ID; planning is the only place the stronger model is used.
+    """
     from strands import Agent
     from strands.models import BedrockModel
 
-    return Agent(model=BedrockModel(**constants.bedrock_model_kwargs()))
+    return Agent(model=BedrockModel(**constants.planner_model_kwargs()))

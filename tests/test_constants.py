@@ -50,3 +50,31 @@ def test_bedrock_model_kwargs_honors_guardrail_version(monkeypatch):
     kwargs = constants.bedrock_model_kwargs()
 
     assert kwargs["guardrail_version"] == "3"
+
+
+# --- Planner model split: execution = Nova Micro, planning = (stronger) PLANNER_MODEL_ID
+
+
+def test_planner_model_id_defaults_to_model_id_when_env_unset(monkeypatch):
+    monkeypatch.delenv("PLANNER_MODEL_ID", raising=False)
+    assert constants.planner_model_id() == constants.MODEL_ID
+
+
+def test_planner_model_id_honors_env_override(monkeypatch):
+    monkeypatch.setenv("PLANNER_MODEL_ID", "us.amazon.nova-pro-v1:0")
+    assert constants.planner_model_id() == "us.amazon.nova-pro-v1:0"
+
+
+def test_planner_model_kwargs_uses_planner_model_id(monkeypatch):
+    monkeypatch.setenv("PLANNER_MODEL_ID", "us.amazon.nova-pro-v1:0")
+    monkeypatch.delenv("BEDROCK_GUARDRAIL_ID", raising=False)
+
+    kwargs = constants.planner_model_kwargs()
+
+    assert kwargs["model_id"] == "us.amazon.nova-pro-v1:0"
+    assert kwargs["boto_client_config"].retries["max_attempts"] == 1
+
+
+def test_planner_model_kwargs_defaults_to_execution_model(monkeypatch):
+    monkeypatch.delenv("PLANNER_MODEL_ID", raising=False)
+    assert constants.planner_model_kwargs()["model_id"] == constants.MODEL_ID

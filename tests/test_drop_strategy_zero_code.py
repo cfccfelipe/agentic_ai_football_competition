@@ -1,12 +1,12 @@
 """Drop-a-new-strategy is zero-code (north-star AC-N1).
 
 Builds a minimal plugins tree in tmp_path, drops a BRAND-NEW strategy
-(strategies/<new>.md + <pos>/<new>.md for all five positions), points the
+(strategies/<new>.md + <role>/<new>.md for all four roles), points the
 registry + loader roots at it, and asserts through the RUNTIME entry points
 (not registry.discover(dir) directly) that the new strategy is:
   (a) selectable by the planner — plugin_loader.strategy_names() includes it;
-  (b) loadable for every one of the five positions — load_skill_prompt returns
-      the new body for each position label.
+  (b) loadable for every one of the four roles — load_skill_prompt returns
+      the new body for each role label.
 
 No Python is edited to add the strategy. Uses tool-free bodies so the drop
 mirrors a plain new strategy (decide-with-facts still comes from the static
@@ -22,7 +22,7 @@ mock_agentcore_gateway()
 import plugin_loader  # noqa: E402
 from plugins import registry  # noqa: E402
 
-POSITIONS = ("gk", "def", "mid", "fwd1", "fwd2")
+POSITIONS = ("gk", "def", "mid", "fwd")
 NEW = "counterpress"
 MARKER = "COUNTERPRESS-BODY-MARKER"
 
@@ -74,8 +74,8 @@ def test_dropped_strategy_is_selectable_and_loadable(tmp_path, monkeypatch):
     assert NEW in names
     assert {"balanced", "aggressive", "defensive"} <= set(names)
 
-    # (b) loadable for all five positions through the runtime entry point.
-    labels = {"gk": "GK", "def": "DEF", "mid": "MID", "fwd1": "FWD1", "fwd2": "FWD2"}
+    # (b) loadable for all FOUR roles through the runtime entry point.
+    labels = {"gk": "GK", "def": "DEF", "mid": "MID", "fwd": "FWD"}
     for folder, label in labels.items():
         body = plugin_loader.load_skill_prompt(NEW, label, 3)
         assert MARKER in body, f"{label} did not load the new {NEW} body"

@@ -63,18 +63,16 @@ _POSITION_LATENCY_BASE = {
     "GK": 600.0,
     "DEF": 740.0,
     "MID": 850.0,
-    "FWD1": 560.0,
-    "FWD2": 720.0,
+    "FWD": 640.0,
 }
 
-# Command bias per position, further nudged by scoreline/possession in the
-# decider. Weights are relative, not probabilities.
+# Command bias per role, further nudged by scoreline/possession in the decider.
+# Weights are relative, not probabilities. The 4-role set after the fwd collapse.
 _POSITION_BIAS = {
     "GK": {"GK_DISTRIBUTE": 5, "MOVE_TO": 3, "PASS": 1},
     "DEF": {"MARK": 4, "PRESS_BALL": 3, "INTERCEPT": 2, "SLIDE_TACKLE": 2, "MOVE_TO": 2},
     "MID": {"PASS": 4, "MOVE_TO": 4, "PRESS_BALL": 2, "MARK": 2, "INTERCEPT": 1},
-    "FWD1": {"MOVE_TO": 4, "SHOOT": 3, "PASS": 3, "PRESS_BALL": 1},
-    "FWD2": {"MOVE_TO": 4, "SHOOT": 3, "PASS": 2, "PRESS_BALL": 1},
+    "FWD": {"MOVE_TO": 4, "SHOOT": 3, "PASS": 3, "PRESS_BALL": 1},
 }
 
 

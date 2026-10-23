@@ -3,9 +3,9 @@
 Guards two invariants so the deployed bundle does not crash:
   - src/governance/tool_catalog.md exists and ships via the already-staged
     governance/ folder (no deploy_all.py change needed for a new governance md);
-  - deploy_all.SHARED_MODULES is still exactly the five runtime modules under
-    players/ — this plan introduces NO new players/ module, and a future one
-    MUST be added here or the bundle raises ModuleNotFoundError.
+  - deploy_all.SHARED_MODULES lists every runtime module under players/
+    (including the new formation_roles.py). A future players/ module MUST be
+    added here or the bundle raises ModuleNotFoundError.
 
 deploy_all is import-safe (its flow is under main() + __main__ guard).
 """
@@ -34,11 +34,15 @@ def test_governance_is_staged_so_catalog_ships(deploy_all):
     assert "governance" in staged
 
 
-def test_shared_modules_is_the_expected_five(deploy_all):
+def test_shared_modules_includes_formation_roles(deploy_all):
+    # formation_roles.py is a NEW players/ runtime module (the dynamic-role
+    # single source of truth) and MUST ship, or the bundle raises
+    # ModuleNotFoundError at init.
     assert deploy_all.SHARED_MODULES == [
         "constants.py",
         "planner.py",
         "plugin_loader.py",
         "unified_agent.py",
         "runtime_guards.py",
+        "formation_roles.py",
     ]

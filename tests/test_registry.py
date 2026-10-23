@@ -39,7 +39,8 @@ def test_formation_folded_scalar_defaults(tmp_path):
 
 def test_discovers_all_plugins():
     found = registry.discover()
-    # strategy metadata (strategies/*.md) + scripts plugin + five position indexes
+    # strategy metadata (strategies/*.md) + scripts plugin + four role indexes
+    # (gk/def/mid/fwd after the fwd1/fwd2 collapse).
     assert set(found) >= {
         "general",
         "balanced",
@@ -48,16 +49,17 @@ def test_discovers_all_plugins():
         "gk",
         "def",
         "mid",
-        "fwd1",
-        "fwd2",
+        "fwd",
     }
+    # The collapsed forward folders are gone.
+    assert "fwd1" not in found and "fwd2" not in found
 
 
 def test_position_indexes_are_not_strategies():
-    # The per-position skill.md indexes use `type: position`; the registry must
+    # The per-role skill.md indexes use `type: position`; the registry must
     # never surface them as selectable strategies.
     strats = registry.strategies()
-    for pos in ("gk", "def", "mid", "fwd1", "fwd2"):
+    for pos in ("gk", "def", "mid", "fwd"):
         assert pos not in strats
 
 

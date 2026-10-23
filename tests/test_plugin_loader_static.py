@@ -79,19 +79,19 @@ def test_build_static_base_has_no_strategy_or_position_markers():
 
 def test_compose_tick_prompt_joins_base_and_skill_body():
     base = plugin_loader.build_static_base()
-    composed = plugin_loader.compose_tick_prompt(base, "aggressive", "FWD1", 3)
-    expected = base + "\n\n---\n\n" + plugin_loader.load_skill_prompt("aggressive", "FWD1", 3)
+    composed = plugin_loader.compose_tick_prompt(base, "aggressive", "FWD", 3)
+    expected = base + "\n\n---\n\n" + plugin_loader.load_skill_prompt("aggressive", "FWD", 3)
     assert composed == expected
-    # FWD1 body marker + aggressive's resolved formation present.
-    assert "Forward 1" in composed
-    assert "1-0-3" in composed
+    # Forward (merged) body marker + aggressive's resolved formation present.
+    assert "Forward" in composed
+    assert "1-1-2" in composed
 
 
 def test_build_system_prompt_wrapper_keeps_e2e_markers():
-    prompt = plugin_loader.build_system_prompt("aggressive", "FWD1", 3)
+    prompt = plugin_loader.build_system_prompt("aggressive", "FWD", 3)
     # Finding 5 — these are the markers test_e2e_tick.py asserts on.
     assert "JSON array" in prompt          # full guardrails
     assert "Formation" in prompt           # formation posture section
-    assert "1-0-3" in prompt               # aggressive's formation
+    assert "1-1-2" in prompt               # aggressive's remapped formation
     # Tool catalog folded in via build_static_base.
     assert "evaluate_shot" in prompt

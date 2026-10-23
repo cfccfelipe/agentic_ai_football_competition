@@ -103,3 +103,50 @@ def test_fwd1_and_fwd2_keep_distinct_flanks(team_id):
     assert fwd1.endswith("L"), f"FWD1 should favour the left half, got {fwd1}"
     assert fwd2.endswith("R"), f"FWD2 should favour the right half, got {fwd2}"
     assert fwd1 != fwd2
+
+
+@pytest.mark.parametrize("team_id", [0, 1])
+def test_merged_fwd_config_shoots_situationally(team_id):
+    # The single merged forward config still picks a situational corner.
+    low = _shoot_cmd(fallback.FWD_CONFIG, team_id, 3, shooter_y=-8)["parameters"]["aim_location"]
+    high = _shoot_cmd(fallback.FWD_CONFIG, team_id, 3, shooter_y=8)["parameters"]["aim_location"]
+    assert low in VALID_CORNERS and high in VALID_CORNERS
+    assert low.startswith("T") and high.startswith("B")
+
+
+# --- item 17: DEF may SHOOT in fallback when close to the opponent goal ------
+
+
+@pytest.mark.parametrize("team_id", [0, 1])
+def test_def_fallback_shoots_when_close_to_goal(team_id):
+    # A defender carrying the ball into a close chance SHOULD shoot (the DEF
+    # goal that won us a match). Situational aim, valid corner.
+    cmd = _shoot_cmd(fallback.DEF_CONFIG, team_id, 1, shooter_y=-5)
+    assert cmd["commandType"] == "SHOOT"
+    assert cmd["parameters"]["aim_location"] in VALID_CORNERS
+
+
+def test_def_fallback_builds_out_when_far_and_never_to_gk():
+    # Far from goal, DEF passes forward (builds out) and NEVER recycles to the
+    # GK (pass_exclude_ids=[0]).
+    team_id = 0
+    # Defender deep in own half, not near opponent goal; add teammates to pass to.
+    state = {
+        "ball": {
+            "position": {"x": -40, "y": 0, "z": 0},
+            "velocity": {"x": 0, "y": 0, "z": 0},
+            "isFree": False,
+            "possessionAgentId": "agentId_1",
+        },
+        "players": [
+            {"agentId": "agentId_0", "teamCode": "home", "position": {"x": -52, "y": 0}},
+            {"agentId": "agentId_1", "teamCode": "home", "position": {"x": -40, "y": 0}},
+            {"agentId": "agentId_2", "teamCode": "home", "position": {"x": -10, "y": 5}},
+            {"agentId": "agentId_3", "teamCode": "home", "position": {"x": 20, "y": -8}},
+        ],
+    }
+    cmds = fallback.build_fallback(fallback.DEF_CONFIG)(state, team_id, 1)
+    assert len(cmds) == 1
+    cmd = cmds[0]
+    assert cmd["commandType"] == "PASS"
+    assert cmd["parameters"]["target_player_id"] != 0  # never back to the GK

@@ -132,6 +132,52 @@ def test_auto_falls_back_to_rule_when_llm_times_out(monkeypatch):
     assert result == "aggressive"
 
 
+def test_default_agent_builds_from_planner_model_kwargs(monkeypatch):
+    # The PLANNER agent must build its model from PLANNER_MODEL_ID (via
+    # planner_model_kwargs), NOT the execution bedrock_model_kwargs.
+    import sys
+    from test_helpers import mock_strands_core
+
+    mock_strands_core()
+    built = {}
+
+    def fake_planner_kwargs():
+        built["called"] = True
+        return {"model_id": "stronger-model"}
+
+    monkeypatch.setattr(constants, "planner_model_kwargs", fake_planner_kwargs)
+
+    captured = {}
+    real_bedrock = sys.modules["strands.models"].BedrockModel
+
+    class SpyBedrock(real_bedrock):
+        def __init__(self, *a, **kw):
+            captured.update(kw)
+            super().__init__(*a, **kw)
+
+    monkeypatch.setattr(sys.modules["strands.models"], "BedrockModel", SpyBedrock)
+
+    planner._default_agent()
+
+    assert built.get("called") is True
+    assert captured.get("model_id") == "stronger-model"
+
+
+# --- B4/P4: planner must NOT default to aggressive; start structured ---------
+
+
+def test_rule_kickoff_level_is_balanced_not_aggressive():
+    # Kickoff 0-0, low gameTime (seconds): start structured, not aggressive.
+    gs = _state(home=0, away=0, game_time=0)
+    assert planner.rule_based_strategy(gs, 0) == DEFAULT_STRATEGY == "balanced"
+
+
+def test_rule_level_early_stays_balanced_even_around_120s():
+    # ~120s is EARLY (gameTime is seconds) — must not flip to aggressive/defensive.
+    gs = _state(home=0, away=0, game_time=120)
+    assert planner.rule_based_strategy(gs, 0) == "balanced"
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

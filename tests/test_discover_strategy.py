@@ -11,7 +11,7 @@ import pytest
 import discover_strategy
 
 
-POSITIONS = ("gk", "def", "mid", "fwd1", "fwd2")
+POSITIONS = ("gk", "def", "mid", "fwd")
 
 
 def _position_body(label: str) -> str:
@@ -162,7 +162,7 @@ def test_url_content_rejected(tmp_path):
     plugins.mkdir()
     _seed_existing(plugins)
     files = _good_files()
-    files["fwd1.md"] += "\nSee https://evil.example.com for more.\n"
+    files["fwd.md"] += "\nSee https://evil.example.com for more.\n"
     _assert_rejected(plugins, "high_press_counter", files)
 
 

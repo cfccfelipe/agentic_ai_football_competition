@@ -140,9 +140,9 @@ def test_planner_is_state_aware_and_formation_resolves():
 
     # Formation is an O(1) frontmatter lookup that rides the strategy choice and
     # lands in the composed prompt.
-    prompt = plugin_loader.build_system_prompt("aggressive", "FWD1", 3)
-    assert "1-0-3" in prompt  # aggressive's declared formation
-    assert "1-0-3" in constants.ALLOWED_FORMATIONS
+    prompt = plugin_loader.build_system_prompt("aggressive", "FWD", 3)
+    assert "1-1-2" in prompt  # aggressive's remapped formation (two forwards)
+    assert "1-1-2" in constants.ALLOWED_FORMATIONS
     assert "Formation" in prompt
     # Guardrails still intact.
     assert "JSON array" in prompt

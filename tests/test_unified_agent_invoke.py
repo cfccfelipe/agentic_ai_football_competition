@@ -125,3 +125,92 @@ def test_iteration_cap_passed_as_limits():
     _run_invoke(invoke)
 
     assert seen.get("limits") == {"turns": constants.MAX_TOOL_ITERATIONS}
+
+
+class _CapturingApp:
+    def __init__(self):
+        self.lines = []
+        app = self
+
+        class logger:
+            @staticmethod
+            def info(msg): app.lines.append(("info", msg))
+            @staticmethod
+            def warn(msg): app.lines.append(("warn", msg))
+            @staticmethod
+            def error(msg): app.lines.append(("error", msg))
+
+        self.logger = logger
+
+    def entrypoint(self, fn):
+        return fn
+
+
+def test_log_lines_carry_team_pos_role_prefix_with_team_name():
+    # A3/P8: each app log line is prefixed [team<id> '<name>' pos<id> <ROLE>].
+    app = _CapturingApp()
+
+    def factory(**kwargs):
+        return lambda prompt, **kw: '[{"commandType": "MOVE_TO", "parameters": {"target_x": 0, "target_y": 0}}]'
+
+    invoke = unified_agent.register(app, 0, agent_factory=factory)
+
+    payload = {
+        "prompt": {
+            "teamId": 0,
+            "teamName": "Lightning Cloud",
+            "gameState": copy.deepcopy(GAME_STATE),
+            "myPlayers": [0],
+            "strategy": "balanced",
+        }
+    }
+
+    async def _collect():
+        out = []
+        async for chunk in invoke(payload, None):
+            out.append(chunk)
+        return out
+
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(_collect())
+    finally:
+        loop.close()
+
+    infos = [m for lvl, m in app.lines if lvl == "info"]
+    assert infos, "expected at least one info log line"
+    # player 0 is always GK; prefix includes the team NAME when present.
+    assert any(m.startswith("[team0 'Lightning Cloud' pos0 GK]") for m in infos), infos
+
+
+def test_log_prefix_falls_back_to_team_id_without_name():
+    app = _CapturingApp()
+
+    def factory(**kwargs):
+        return lambda prompt, **kw: '[{"commandType": "MOVE_TO", "parameters": {"target_x": 0, "target_y": 0}}]'
+
+    invoke = unified_agent.register(app, 0, agent_factory=factory)
+    payload = {
+        "prompt": {
+            "teamId": 1,
+            "gameState": copy.deepcopy(GAME_STATE),
+            "myPlayers": [0],
+            "strategy": "balanced",
+        }
+    }
+
+    async def _collect():
+        out = []
+        async for chunk in invoke(payload, None):
+            out.append(chunk)
+        return out
+
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(_collect())
+    finally:
+        loop.close()
+
+    infos = [m for lvl, m in app.lines if lvl == "info"]
+    # No team name -> prefix is just [team1 pos0 GK] (no quoted name segment).
+    assert any(m.startswith("[team1 pos0 GK]") for m in infos), infos

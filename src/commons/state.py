@@ -191,7 +191,7 @@ def summarize_state(
         stam = me.get("stamina", 1.0)
         dist_ball = dist(pos, ball_pos)
         has_ball = holder_is_me(ball, players, team_id, my_player_id)
-        extra = f" distOppGoal={abs(pos.get('x', 0) - opp_goal_x):.1f}" if position_label in ("MID", "FWD1", "FWD2") else ""
+        extra = f" distOppGoal={abs(pos.get('x', 0) - opp_goal_x):.1f}" if position_label in ("MID", "FWD", "FWD1", "FWD2") else ""
         lines.append(
             f">>> YOUR PLAYER ({position_label}, id={my_player_id}): "
             f"pos=({pos.get('x',0):.1f},{pos.get('y',0):.1f}) "
@@ -218,7 +218,7 @@ def summarize_state(
     lines.append("")
 
     # Opponents
-    opp_header = "Opponents (defenders to watch):" if position_label in ("FWD1", "FWD2") else "Opponents:"
+    opp_header = "Opponents (defenders to watch):" if position_label in ("FWD", "FWD1", "FWD2") else "Opponents:"
     lines.append(opp_header)
     for p in opponents:
         pos = p.get("position", {})

@@ -6,8 +6,27 @@ for all positions until we have confirmed capacity to go bigger.
 
 import os
 
-# Model used by every agent and the planner. Nova Micro everywhere for now.
+# Model used by every EXECUTION agent (per-tick command). Nova Micro: fast + cheap,
+# which matters because every player runs it ~every 2s under a 5s decision window.
 MODEL_ID = "us.amazon.nova-micro-v1:0"
+
+
+def planner_model_id() -> str:
+    """Model id for the PLANNER (the per-tick strategy + formation decision).
+
+    Execution stays Nova Micro (MODEL_ID); planning is the ONE place a stronger
+    model earns its latency, because a wrong strategy pick costs the whole tick.
+    Resolved from env PLANNER_MODEL_ID so a stronger Bedrock id (e.g. a Nova
+    Lite/Pro or Claude Haiku id) can be enabled without a code change; defaults
+    to MODEL_ID so a deploy NEVER breaks when no stronger model is confirmed
+    enabled in the account/region. See .env.example for a candidate id.
+    """
+    return os.environ.get("PLANNER_MODEL_ID") or MODEL_ID
+
+
+# Back-compat module constant (snapshot at import). Prefer planner_model_id()
+# so an env override set after import is still honored.
+PLANNER_MODEL_ID = os.environ.get("PLANNER_MODEL_ID") or MODEL_ID
 
 # --- Runtime hardening (FEAT-002) -----------------------------------------
 # Hard wall-clock budget for a single tick's model+tools call. The server
@@ -61,15 +80,59 @@ def bedrock_model_kwargs() -> dict:
         kwargs["guardrail_version"] = guardrail_version()
     return kwargs
 
-# Fixed player-id -> position-label map. The server always fields 5 players;
-# the position is derived from the id, never guessed.
+
+def planner_model_kwargs() -> dict:
+    """Kwargs for the PLANNER's BedrockModel — mirrors bedrock_model_kwargs()
+    but uses the (optionally stronger) PLANNER_MODEL_ID.
+
+    Same retries-off + optional guardrail wiring as the execution model, so the
+    only difference between planning and execution is the model id.
+    """
+    from botocore.config import Config
+
+    kwargs: dict = {
+        "model_id": planner_model_id(),
+        "boto_client_config": Config(
+            retries={"max_attempts": 1, "mode": "standard"}
+        ),
+    }
+    gid = guardrail_id()
+    if gid:
+        kwargs["guardrail_id"] = gid
+        kwargs["guardrail_version"] = guardrail_version()
+    return kwargs
+
+# Fixed player-id -> position-label map. The server always fields 5 players.
+# player 0 is ALWAYS GK and player 1 ALWAYS DEF (hard-pinned, see
+# formation_roles). players 2/3/4 default to these labels but may be reassigned
+# a role per the formation / flex flag — formation_roles is the source of truth.
 PLAYER_POSITIONS = {
     0: "GK",
     1: "DEF",
     2: "MID",
-    3: "FWD1",
-    4: "FWD2",
+    3: "FWD",
+    4: "FWD",
 }
+
+# The 4-role set every player resolves to (the GK is always player 0). Forward
+# players 3/4 (and any flexed player) collapse to the single FWD role folder.
+ROLES = ("GK", "DEF", "MID", "FWD")
+
+# Role label -> plugins/<folder>. FWD1/FWD2 are accepted as transition aliases
+# for FWD so older callers/tests keep loading the merged forward body.
+_ROLE_FOLDERS = {
+    "GK": "gk", "DEF": "def", "MID": "mid", "FWD": "fwd",
+    "FWD1": "fwd", "FWD2": "fwd",
+}
+
+
+def role_folder(role_label: str) -> str:
+    """Map a role label (GK/DEF/MID/FWD, or FWD1/FWD2 alias) to its plugin folder.
+
+    Unknown labels fall back to their lowercase form so a genuinely new role
+    folder still resolves; FWD1/FWD2 both resolve to the single ``fwd`` folder.
+    """
+    return _ROLE_FOLDERS.get(role_label.upper(), role_label.lower())
 
 # Strategy used when the planner cannot decide.
 DEFAULT_STRATEGY = "balanced"

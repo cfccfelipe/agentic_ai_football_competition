@@ -1,13 +1,15 @@
-"""Per-agentId routing to position + correct skill file, for BOTH teams.
+"""Per-agentId routing to ROLE + correct skill file, for BOTH teams.
 
-Covers AC-B1..B4:
-  - every agentId 0..4 resolves to its correct position label via the
-    single-source constants.position_for;
-  - the composed system prompt carries the position-UNIQUE body marker (no
-    cross-wiring: GK loads gk/, FWD1 loads fwd1/, etc.);
-  - BOTH resolution branches: (a) payload-supplied myPlayers, and (b) the
-    pinned MY_PLAYER_ID production branch with myPlayers omitted;
-  - BOTH teams: team 0 HOME and team 1 AWAY (away perspective summarized).
+Dynamic roles (feat/dynamic-roles): the role is NOT a fixed id->position map
+anymore. player 0 is ALWAYS GK and player 1 ALWAYS DEF; players 2/3/4 take the
+chosen strategy's formation distribution via formation_roles. These tests pin
+the strategy to ``balanced`` (formation 2-1-1 -> roles 0=GK,1=DEF,2=DEF,3=MID,
+4=FWD) and assert:
+  - each player loads the role body the formation implies (via the ROLE-unique
+    body marker, no cross-wiring);
+  - BOTH resolution branches: (a) payload-supplied myPlayers, (b) the pinned
+    MY_PLAYER_ID production branch with myPlayers omitted;
+  - BOTH teams: team 0 HOME and team 1 AWAY.
 
 Pure: no AWS, no network, no real strands.
 """
@@ -23,6 +25,8 @@ from test_helpers import GAME_STATE, mock_agentcore_gateway
 mock_agentcore_gateway()
 
 import constants  # noqa: E402
+import formation_roles  # noqa: E402
+import plugin_loader  # noqa: E402
 import unified_agent  # noqa: E402
 from parsing import VALID_COMMANDS  # noqa: E402
 
@@ -40,23 +44,25 @@ class _FakeApp:
         return fn
 
 
-# Position-unique markers taken from the real plugins/<pos>/<strategy>.md bodies.
-POSITION_MARKER = {
+# Role -> UNIQUE marker taken from the real plugins/<role>/balanced.md bodies.
+ROLE_MARKER = {
     "GK": "Goalkeeper",
     "DEF": "Defender",
     "MID": "Midfielder",
-    "FWD1": "Forward 1",
-    "FWD2": "Forward 2",
+    "FWD": "Forward (Striker)",
 }
 
-# Markers that must NOT appear (would mean cross-wiring to another position).
+# Markers that must NOT appear (would mean cross-wiring to another role body).
 OTHER_MARKERS = {
-    "GK": ["Forward 1", "Forward 2", "Midfielder"],
-    "DEF": ["Goalkeeper", "Forward 1", "Forward 2"],
-    "MID": ["Goalkeeper", "Forward 1", "Forward 2"],
-    "FWD1": ["Goalkeeper", "Forward 2 (Right"],
-    "FWD2": ["Goalkeeper", "Forward 1 (Left"],
+    "GK": ["Defender", "Midfielder", "Forward (Striker)"],
+    "DEF": ["Goalkeeper", "Midfielder", "Forward (Striker)"],
+    "MID": ["Goalkeeper", "Forward (Striker)"],
+    "FWD": ["Goalkeeper"],
 }
+
+# balanced's formation (2-1-1) -> the role each player resolves to.
+_BALANCED_FORMATION = plugin_loader.strategy_meta("balanced").formation
+_ROLES = formation_roles.formation_roles(_BALANCED_FORMATION, flex=False)
 
 
 def _collect(invoke, payload):
@@ -82,7 +88,7 @@ def _capturing_factory(captured):
 
 
 def _state_for_team(team_id):
-    """A game state where the ball is free, so every position has a sane tick."""
+    """A game state where the ball is free, so every role has a sane tick."""
     gs = copy.deepcopy(GAME_STATE)
     gs["ball"]["isFree"] = True
     gs["ball"].pop("possessionAgentId", None)
@@ -93,7 +99,7 @@ def _state_for_team(team_id):
 @pytest.mark.parametrize("team_id", [0, 1])
 def test_routing_supplied_myplayers(player_id, team_id):
     """Branch (a): payload supplies myPlayers -> effective_pid from payload."""
-    expected_pos = constants.PLAYER_POSITIONS[player_id]
+    expected_role = _ROLES[player_id]
     captured = {}
 
     # Register pinned to a DIFFERENT id to prove myPlayers wins when present.
@@ -105,17 +111,15 @@ def test_routing_supplied_myplayers(player_id, team_id):
             "teamId": team_id,
             "gameState": _state_for_team(team_id),
             "myPlayers": [player_id],
-            # Pin the strategy so the loaded body is deterministic across
-            # positions (balanced bodies carry the position-unique marker).
             "strategy": "balanced",
         }
     }
     out = _collect(invoke, payload)
 
     prompt = captured["system_prompt"]
-    assert POSITION_MARKER[expected_pos] in prompt
-    for bad in OTHER_MARKERS[expected_pos]:
-        assert bad not in prompt, f"{expected_pos} prompt leaked marker {bad!r}"
+    assert ROLE_MARKER[expected_role] in prompt
+    for bad in OTHER_MARKERS[expected_role]:
+        assert bad not in prompt, f"{expected_role} prompt leaked marker {bad!r}"
 
     parsed = json.loads(out[0])
     assert parsed[0]["playerId"] == player_id
@@ -127,7 +131,7 @@ def test_routing_supplied_myplayers(player_id, team_id):
 @pytest.mark.parametrize("team_id", [0, 1])
 def test_routing_pinned_id_myplayers_absent(player_id, team_id):
     """Branch (b): production wiring — myPlayers omitted, pinned id resolves."""
-    expected_pos = constants.PLAYER_POSITIONS[player_id]
+    expected_role = _ROLES[player_id]
     captured = {}
 
     invoke = unified_agent.register(_FakeApp(), player_id, agent_factory=_capturing_factory(captured))
@@ -143,10 +147,16 @@ def test_routing_pinned_id_myplayers_absent(player_id, team_id):
     out = _collect(invoke, payload)
 
     prompt = captured["system_prompt"]
-    assert POSITION_MARKER[expected_pos] in prompt
-    for bad in OTHER_MARKERS[expected_pos]:
+    assert ROLE_MARKER[expected_role] in prompt
+    for bad in OTHER_MARKERS[expected_role]:
         assert bad not in prompt
 
     parsed = json.loads(out[0])
     assert parsed[0]["playerId"] == player_id
     assert parsed[0]["teamId"] == team_id
+
+
+def test_player0_is_always_gk_and_player1_always_def():
+    # The hard pin holds regardless of the formation the strategy declares.
+    assert _ROLES[0] == "GK"
+    assert _ROLES[1] == "DEF"

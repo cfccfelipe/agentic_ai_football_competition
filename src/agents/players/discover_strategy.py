@@ -1,7 +1,7 @@
 """OFFLINE strategy discovery + validation.
 
 Given a target name, an injected research callable proposes a full strategy
-spec (``strategy.md`` metadata + the five position bodies). The spec is
+spec (``strategy.md`` metadata + the four role bodies). The spec is
 validated hard — structure, frontmatter, name safety, non-collision, and
 content safety — then staged to an OS-temp directory and landed into the
 position-grouped layout ONLY on full success: the metadata file goes to
@@ -38,8 +38,8 @@ import constants  # noqa: E402
 from parsing import VALID_COMMANDS  # noqa: E402
 from plugins import registry  # noqa: E402
 
-# The five positions a strategy supplies a body for.
-POSITIONS = ("gk", "def", "mid", "fwd1", "fwd2")
+# The four ROLES a strategy supplies a body for (fwd1/fwd2 collapsed into fwd).
+POSITIONS = ("gk", "def", "mid", "fwd")
 
 # The metadata file key in a research spec (frontmatter only: name/type/
 # formation/description). Lands at plugins/strategies/<name>.md.
@@ -78,8 +78,10 @@ _OVERRIDE_PHRASES = (
 # Words that appear legitimately in the prompts and are NOT commands.
 _ALLOWED_UPPER_WORDS = {
     "ONLY", "JSON", "TR", "TL", "BR", "BL", "THROUGH", "THROW", "KICK",
-    "TIGHT", "HOME", "AWAY", "GK", "DEF", "MID", "FWD1", "FWD2", "NEVER",
-    "ALWAYS", "YOUR",
+    "TIGHT", "LOOSE", "LOB", "GROUND", "CENTER",
+    "HOME", "AWAY", "GK", "DEF", "MID", "FWD", "NEVER",
+    "ALWAYS", "YOUR", "FORWARD", "BACK", "ATTACK", "DEFEND", "WE", "OPP", "MY",
+    "SPREAD", "FORBIDDEN", "THESE",
 }
 
 
@@ -225,7 +227,7 @@ def generate(name: str, research, plugins_dir: Path | None = None) -> Path:
     Args:
         name: the target strategy name (also the per-file stem in each folder).
         research: a callable ``name -> {filename: content}`` producing the spec
-            (``strategy.md`` metadata + ``gk/def/mid/fwd1/fwd2.md`` bodies).
+            (``strategy.md`` metadata + ``gk/def/mid/fwd.md`` bodies).
             Injected so the whole flow is offline-testable; the default (built
             only in ``main()``) uses a web-search/Strands agent.
         plugins_dir: the plugins root where strategies/ and the position folders
@@ -295,7 +297,7 @@ def _default_research(name: str) -> dict[str, str]:  # pragma: no cover
         tools=[http_request],
         system_prompt=(
             "You research football tactics and emit a strategy spec as six files "
-            "(strategy.md + gk/def/mid/fwd1/fwd2.md). strategy.md needs flat "
+            "(strategy.md + gk/def/mid/fwd.md). strategy.md needs flat "
             "frontmatter name/type(=strategy)/formation/description. Position "
             "files must reference only valid commands and end with a JSON-array "
             "response line."

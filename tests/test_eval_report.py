@@ -127,7 +127,8 @@ def test_simulate_match_default_run_all_success():
 def test_simulate_match_covers_all_positions():
     records = simulate_match(ticks=10, teams=["A"], seed=3)
     positions = {r["position"] for r in records}
-    assert positions == {"GK", "DEF", "MID", "FWD1", "FWD2"}
+    # 4-role set after the fwd1/fwd2 collapse: players 3 and 4 both label FWD.
+    assert positions == {"GK", "DEF", "MID", "FWD"}
 
 
 def test_simulate_match_latency_under_budget():

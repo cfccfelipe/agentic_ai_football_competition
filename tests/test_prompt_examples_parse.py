@@ -19,11 +19,18 @@ import pytest
 import plugin_loader
 from parsing import VALID_COMMANDS
 
-# Sample player id per position (0 GK, 1 DEF, 2 MID, 3 FWD1, 4 FWD2).
-_SAMPLE_IDS = {"GK": 0, "DEF": 1, "MID": 2, "FWD1": 3, "FWD2": 4}
+# Sample player id per ROLE (0 GK, 1 DEF, 2 MID, 3 FWD after the fwd collapse).
+_SAMPLE_IDS = {"GK": 0, "DEF": 1, "MID": 2, "FWD": 3}
 
 _POSITIONS = tuple(_SAMPLE_IDS)
 _STRATEGIES = plugin_loader.strategy_names()
+
+# Invented parameter keys the LLM emitted that the parser does NOT accept. The
+# bodies carry a schema-discipline block; none of these keys may appear in it.
+_FORBIDDEN_PARAM_KEYS = (
+    '"targetId"', '"target"', '"targetPlayerId"', '"passType"',
+    '"pass_type"', '"method":"PASS"', '"method":"SHORT_PASS"',
+)
 
 
 def _example_array(rendered: str) -> str:
@@ -55,3 +62,19 @@ def test_rendered_example_is_valid_json(position, strategy):
     assert cmd["commandType"] in VALID_COMMANDS
     assert isinstance(cmd["playerId"], int) and cmd["playerId"] == player_id
     assert isinstance(cmd["parameters"], dict)
+
+
+@pytest.mark.parametrize("position", _POSITIONS)
+@pytest.mark.parametrize("strategy", _STRATEGIES)
+def test_body_carries_schema_discipline_without_forbidden_json_keys(position, strategy):
+    # A2/P1: every role body shows the accepted keys and must NOT endorse the
+    # invented parameter keys as JSON (the prose "FORBIDDEN keys: targetId..."
+    # list is unquoted and is allowed; a quoted JSON key is not).
+    player_id = _SAMPLE_IDS[position]
+    rendered = plugin_loader.load_skill_prompt(strategy, position, player_id)
+
+    assert "Command schema" in rendered, f"{position}/{strategy}: no schema block"
+    # The accepted keys must be present.
+    assert "target_player_id" in rendered
+    for bad in _FORBIDDEN_PARAM_KEYS:
+        assert bad not in rendered, f"{position}/{strategy}: endorses forbidden key {bad}"

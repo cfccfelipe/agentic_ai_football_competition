@@ -92,10 +92,14 @@ GK_CONFIG = FallbackConfig(
 )
 
 DEF_CONFIG = FallbackConfig(
-    possession_action="PASS",
+    # DEF can SHOOT when it carries the ball into a close chance (the DEF goal
+    # that won us a match), otherwise build out with a PASS. Keeps the
+    # defensive line + marking behaviour below.
+    possession_action="SHOOT_OR_PASS",
     pass_exclude_ids=[0],  # don't pass back to GK
     default_x_factor=0.6, default_x_ref="my_goal", default_y=0,
     mark_threshold=30.0, mark_tightness="TIGHT",
+    shoot_threshold=22.0, shoot_aim="TR", shoot_aim_side="R", shoot_power=0.85,
     default_stance=2,
     last_resort_command_type="SET_STANCE", last_resort_params={"stance": 2},
 )
@@ -129,6 +133,23 @@ FWD2_CONFIG = FallbackConfig(
     default_x_factor=0.4, default_x_ref="opp_goal", default_y=8,
     press_distance=20.0, press_intensity=0.7,
     shoot_aim="BR", shoot_aim_side="R", shoot_power=0.9,
+    default_stance=1,
+    last_resort_command_type="PRESS_BALL", last_resort_params={"intensity": 0.6},
+    last_resort_duration=3,
+)
+
+# The single FORWARD fallback config after the fwd1/fwd2 collapse. Any player in
+# the FWD role uses this. A merged body no longer distinguishes flanks, so this
+# config advances through the centre (advance_y=0) and keeps the situational
+# pick_shoot_aim. FWD1_CONFIG/FWD2_CONFIG remain as transition aliases below so
+# any id-3/4 caller still resolves a config.
+FWD_CONFIG = FallbackConfig(
+    possession_action="SHOOT_OR_ADVANCE",
+    advance_x_factor=0.6, advance_y=0, advance_sprint=True,
+    support_x_factor=0.5, support_y=0, support_sprint=True,
+    default_x_factor=0.4, default_x_ref="opp_goal", default_y=0,
+    press_distance=20.0, press_intensity=0.7,
+    shoot_aim="TR", shoot_aim_side="R", shoot_power=0.9,
     default_stance=1,
     last_resort_command_type="PRESS_BALL", last_resort_params={"intensity": 0.6},
     last_resort_duration=3,
@@ -260,9 +281,25 @@ def _on_ball(cfg, game_state, players, team_id, my_player_id, pos, my_goal_x, op
             return [_cmd("SHOOT", my_player_id, team_id,
                          {"aim_location": pick_shoot_aim(pos.get("y", 0), cfg.shoot_aim_side),
                           "power": cfg.shoot_power})]
-        forwards = [p for p in players if _is_my_team(p, team_id) and _player_idx(p) in (3, 4)]
+        # Not a shot — build forward. Prefer an advanced teammate (a forward),
+        # but honour pass_exclude_ids (e.g. DEF never recycles to the GK).
+        exclude = set(cfg.pass_exclude_ids) | {my_player_id}
+        forwards = [
+            p for p in players
+            if _is_my_team(p, team_id)
+            and _player_idx(p) in (3, 4)
+            and _player_idx(p) not in exclude
+        ]
         if forwards:
             target = min(forwards, key=lambda p: abs(p.get("position", {}).get("x", 0) - opp_goal_x))
+            return [_cmd("PASS", my_player_id, team_id,
+                         {"target_player_id": _player_idx(target), "type": "GROUND"})]
+        teammates = [
+            p for p in players
+            if _is_my_team(p, team_id) and _player_idx(p) not in exclude
+        ]
+        if teammates:
+            target = min(teammates, key=lambda p: dist(p.get("position", {}), pos))
             return [_cmd("PASS", my_player_id, team_id,
                          {"target_player_id": _player_idx(target), "type": "GROUND"})]
         return [_cmd("PASS", my_player_id, team_id,
