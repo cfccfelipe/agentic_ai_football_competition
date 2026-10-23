@@ -324,11 +324,24 @@ def _on_ball(cfg, game_state, players, team_id, my_player_id, pos, my_goal_x, op
                 return [_cmd("GK_DISTRIBUTE", my_player_id, team_id,
                              {"target_player_id": _player_idx(target), "method": "KICK"})]
 
-            # No free forward — throw to the safest (most space) nearby teammate
-            safest = max(teammates, key=_nearest_opp_dist)
-            method = "THROW" if dist(safest.get("position", {}), pos) < 20.0 else "KICK"
+            # No free forward — look for any teammate with enough space (> 6 units)
+            # to safely receive a throw. Prioritise closest to reduce interception risk.
+            throwable = [p for p in teammates if _nearest_opp_dist(p) > 6.0]
+            if throwable:
+                target = min(throwable, key=lambda p: dist(p.get("position", {}), pos))
+                return [_cmd("GK_DISTRIBUTE", my_player_id, team_id,
+                             {"target_player_id": _player_idx(target), "method": "THROW"})]
+
+            # Everyone is marked — play it long into the attacking half.
+            # Pick the forward who is furthest from their marker (most likely
+            # to get to the ball first after a long kick).
+            forwards = [p for p in teammates if _player_idx(p) in (3, 4)]
+            long_target = (
+                max(forwards, key=_nearest_opp_dist) if forwards
+                else max(teammates, key=_nearest_opp_dist)
+            )
             return [_cmd("GK_DISTRIBUTE", my_player_id, team_id,
-                         {"target_player_id": _player_idx(safest), "method": method})]
+                         {"target_player_id": _player_idx(long_target), "method": "KICK"})]
 
         return [_cmd("GK_DISTRIBUTE", my_player_id, team_id,
                      {"target_player_id": 3, "method": "KICK"})]
