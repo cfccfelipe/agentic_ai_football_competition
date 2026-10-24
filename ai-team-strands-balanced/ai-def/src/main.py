@@ -3,8 +3,14 @@ AI Soccer Defender Agent — Controls ONLY player 1 (Defender).
 Uses Strands SDK + Amazon Nova Lite.
 """
 
-import os, sys; sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib")); sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "lib"))
-from _bootstrap import setup_lib_path; setup_lib_path(__file__)
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "lib"))
+from _bootstrap import setup_lib_path
+
+setup_lib_path(__file__)
 
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
 from gateway_agent_base import create_gateway_agent
@@ -51,16 +57,15 @@ SYSTEM_PROMPT = f"""You are an AI soccer defender controlling ONLY player {MY_PL
 ## Available Commands (commandType → parameters)
 
 ONE-SHOT:
-- MOVE_TO: target_x (float), target_y (float), sprint (bool)
-- PASS: target_player_id (int), type ("GROUND"|"AERIAL"|"THROUGH") — only if you have ball
-- SHOOT: aim_location ("TL"|"TR"|"BL"|"BR"|"CENTER"), power (0.0-1.0) — only if you have ball
-- SLIDE_TACKLE: target_player_id (int), sprint (bool), distance (float) — risky aggressive tackle
-- GK_DISTRIBUTE: target_player_id (int), method ("THROW"|"KICK") — GK only
+- MOVE_TO: target_x (float), target_y (float), sprint (bool) — purposeful movement to zone or mark position
+- PASS: target_player_id (int), type ("GROUND"|"AERIAL"|"THROUGH") — only if you have ball, to open teammate
+- SHOOT: aim_location ("TL"|"TR"|"BL"|"BR"|"CENTER"), power (0.0-1.0) — only if you have ball (rare for DEF)
+- SLIDE_TACKLE: target_player_id (int), sprint (bool), distance (float) — risky, last-resort only
 
 MAINTAINED:
-- PRESS_BALL: intensity (0.0-1.0) — pressure ball carrier
-- MARK: target_player_id (int), tightness ("LOOSE"|"TIGHT") — man-mark opponent
-- INTERCEPT: aggressive (bool) — predict and intercept the ball
+- PRESS_BALL: intensity (0.0-1.0) — high pressure on ball carrier (only if stamina allows)
+- MARK: target_player_id (int), tightness ("LOOSE"|"TIGHT") — man-mark opponent (PRIMARY tactic)
+- INTERCEPT: aggressive (bool) — predict and intercept the ball (only if closest player)
 - FOLLOW_PLAYER: target_player_id (int), target_team ("HOME"|"AWAY"), distance (float)
 
 TACTICAL:
@@ -70,8 +75,17 @@ TACTICAL:
 
 ## Field
 - Coordinates: x roughly -55 to +55, y roughly -35 to +35
-- Team 0 (HOME) defends -x, attacks toward +x
-- Team 1 (AWAY) defends +x, attacks toward -x
+- Team 0 (HOME) defends -x, attacks toward +x (your goal at x~-55, opponent goal at x~+55)
+- Team 1 (AWAY) defends +x, attacks toward -x (your goal at x~+55, opponent goal at x~-55)
+- Field edges: y roughly -35 to +35
+
+## Reading the State
+- **My Position**: Shows your x, y, stamina
+- **Ball**: Shows ball x, y, possession (HOME/AWAY/LOOSE)
+- **Opponents List**: Threat-ranked 🔴 (red = most dangerous); ⚠ UNMARKED means no teammate covers them
+- **Teammates**: Shows their x, y, if they're open, if they're carrying ball
+- **Phase**: COUNTER, ATTACKING, DEFENDING — adjust intensity accordingly
+- **lastAction**: If present, shows your previous command — use this to avoid repeating ineffective moves
 
 ## Response
 Return ONLY a JSON array with exactly ONE command for player {MY_PLAYER_ID}.
