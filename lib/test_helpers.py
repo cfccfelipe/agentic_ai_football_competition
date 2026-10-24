@@ -7,7 +7,6 @@ Provides:
 """
 
 import sys
-from types import SimpleNamespace
 
 
 # ---------------------------------------------------------------------------
@@ -84,13 +83,13 @@ def mock_agentcore_memory():
 
 class _FakeMCPClient:
     """Minimal stand-in for strands MCPClient."""
-    fake_tools = []
+    fake_tool = None
 
     def __init__(self, transport_factory=None):
         pass
 
     def list_tools_sync(self):
-        return list(self.fake_tools)
+        return [self.fake_tool] if self.fake_tool is not None else []
 
     def __enter__(self):
         return self
@@ -100,18 +99,20 @@ class _FakeMCPClient:
 
 
 def mock_agentcore_gateway():
-    """    Inject fake bedrock_agentcore + MCP modules for gateway-enabled agents.
+    """Inject fake bedrock_agentcore + MCP modules for gateway-enabled agents.
 
     Call this INSTEAD of mock_agentcore() when testing gateway agents.
     """
     import strands
+    from strands.tools import tool
 
     mock_agentcore()
 
-    _FakeMCPClient.fake_tools = [
-        SimpleNamespace(tool_name="get-defensive-assignment___get_defensive_assignment"),
-        SimpleNamespace(tool_name="calculate-pass-options___calculate_pass_options"),
-    ]
+    def fake_tactical_tool(game_state: dict, team_id: int, player_id: int):
+        """Stand-in MCP tool used by offline import tests."""
+        return {"team_id": team_id, "player_id": player_id}
+
+    _FakeMCPClient.fake_tool = tool(fake_tactical_tool)
 
     # Mock MCP client modules
     mcp_mod = type(sys)("mcp")

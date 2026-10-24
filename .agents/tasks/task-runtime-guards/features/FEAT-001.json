@@ -1,0 +1,24 @@
+{
+  "id": "FEAT-001",
+  "type": "fix",
+  "description": "CONCERN 1 (CRITICAL, do first — blocks every deployed agent from starting). The 5 runtimes crash at unified_agent.py line 21 `from _bootstrap import setup_commons_path` with ModuleNotFoundError: No module named '_bootstrap'. Root cause: in the DEPLOYED bundle commons/ is a SIBLING of unified_agent.py (deploy_all.py stages both into the agent dir root), but the inline bootstrap only inserts ../commons and ../../../commons, so _bootstrap is never reachable before the import runs. Fix the inline block AND _bootstrap.setup_commons_path() to also handle the sibling ./commons layout, keeping local-dev working. Independent of FEAT-002/003/004 but ordered first because nothing else matters until startup works.",
+  "status": "completed",
+  "steps": [
+    "TEST FIRST: add tests/test_bootstrap.py. Build a temp dir (pytest tmp_path, NOT under the repo) mirroring the DEPLOYED bundle: <tmp>/agent/ containing a tiny caller .py and <tmp>/agent/commons/_bootstrap.py (copy the real src/commons/_bootstrap.py bytes). Call setup_commons_path(caller_file) and assert the sibling <tmp>/agent/commons is on sys.path and `_bootstrap` imports. Add a second case mirroring local dev (commons at ../../../commons from the caller). Assert the pre-fix code FAILS the sibling case.",
+    "Fix src/commons/_bootstrap.py setup_commons_path(): check candidates in order ['./commons' (sibling/deployed), '../commons' (intermediate), '../../../commons' (local dev)] relative to os.path.dirname(abspath(caller_file)); pick the first existing dir, os.path.normpath it, and insert on sys.path if absent (dedupe). Keep the existing docstring accurate.",
+    "Fix the inline bootstrap block in src/agents/players/unified_agent.py (lines ~19-23): BEFORE `from _bootstrap import setup_commons_path`, also insert os.path.join(os.path.dirname(__file__), 'commons') in addition to the existing ../commons and ../../../commons inserts, so _bootstrap resolves in the deployed sibling layout. Keep the subsequent setup_commons_path(__file__) call unchanged.",
+    "Run the full suite to confirm imports still resolve under conftest.py wiring."
+  ],
+  "acceptance_criteria": [
+    "`uv run pytest -q tests/test_bootstrap.py` passes; the sibling-layout test fails against the ORIGINAL _bootstrap and passes after the fix.",
+    "setup_commons_path resolves commons for all three layouts: sibling ./commons (deployed), ../commons (intermediate), ../../../commons (local dev).",
+    "unified_agent.py inserts the same-dir ./commons path before importing _bootstrap.",
+    "`uv run pytest -q` stays green (47 existing tests still pass)."
+  ],
+  "verification": [
+    "uv run pytest -q tests/test_bootstrap.py",
+    "uv run pytest -q"
+  ],
+  "blocked_reason": null,
+  "findings": "DONE. setup_commons_path now checks 3 candidates in order: ./commons (sibling/deployed), ../commons (intermediate), ../../../commons (local dev); first existing dir wins, normpath'd, deduped before sys.path.insert(0). Falls back to local-dev path if none exist (preserves old behavior for the no-dir edge). unified_agent.py inline block now inserts os.path.join(dirname(__file__),'commons') FIRST (before ../commons and ../../../commons) so `from _bootstrap import setup_commons_path` resolves in the deployed sibling layout. _bootstrap.py module docstring inline-usage snippet updated to match. Tests: tests/test_bootstrap.py (5 cases) — hermetic, build layouts under pytest tmp_path from a copy of the real _bootstrap.py bytes, snapshot/restore sys.path+sys.modules; includes a regression-guard test (_original_setup_commons_path reproduction) proving the old 2-candidate logic never reached the sibling dir. Suite: 47 -> 52 passing via `uv run pytest -q`. NOTE for later FEATs: strands/mcp/bedrock_agentcore are NOT importable in tests — inject fakes via tests/test_helpers.py (mock_agentcore / mock_agentcore_gateway / mock_agentcore_memory). unified_agent.py still builds a strands Agent per tick inside invoke() with no timeout/iteration cap (FEAT target) and imports real strands at module top, so importing unified_agent in a test requires mocks + an agent_factory DI seam (not yet added). No AWS/Strands API calls were made or confirmed in this FEAT (startup-only); the Strands Limits/max-turns signature and CfnGuardrail property names remain to be confirmed by their owning FEATs."
+}

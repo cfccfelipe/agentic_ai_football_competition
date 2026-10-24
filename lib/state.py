@@ -76,40 +76,16 @@ def _resolve_holder(ball: dict, players: list):
     holder_agent = ball.get("possessionAgentId")
     if isinstance(holder_agent, str):
         matches = [p for p in players if p.get("agentId") == holder_agent]
-        if not matches:
-            pid = _possession_idx(ball)
-            if pid is not None:
-                matches = [p for p in players if _player_idx(p) == pid]
     else:
         pid = ball.get("possessionPlayerId")
         if pid is None:
             return None
-        matches = [p for p in players if _player_idx(p) == pid]
-
-    team = ball.get("possessionTeamCode", ball.get("possessionTeamId"))
-    if team is not None:
-        matches = [p for p in matches if _player_matches_team(p, team)]
+        matches = [p for p in players if p.get("playerId") == pid]
+        team = ball.get("possessionTeamId")
+        if team is not None:
+            matches = [p for p in matches if p.get("teamId") == team]
 
     return matches[0] if matches else None
-
-
-def _player_matches_team(player: dict, team) -> bool:
-    """Match a possession team discriminator against either player format."""
-    if player.get("teamId") == team:
-        return True
-
-    team_code = player.get("teamCode")
-    if not isinstance(team_code, str):
-        return False
-
-    normalized_code = team_code.strip().lower()
-    if isinstance(team, str):
-        return normalized_code == team.strip().lower()
-    if team == 0:
-        return normalized_code == "home"
-    if team == 1:
-        return normalized_code == "away"
-    return False
 
 
 def _possession_idx(ball: dict):
@@ -221,9 +197,10 @@ def summarize_state(
         format_set_piece_for_prompt = None   # type: ignore[assignment]
 
     try:
-        from threat import assess_threats
+        from threat import assess_threats, format_threats_for_prompt
     except ImportError:
-        assess_threats = None  # type: ignore[assignment]
+        assess_threats = None              # type: ignore[assignment]
+        format_threats_for_prompt = None   # type: ignore[assignment]
 
     try:
         from coordination import (
@@ -238,14 +215,8 @@ def summarize_state(
 
     ball      = game_state.get("ball", {})
     ball_pos  = ball.get("position", {"x": 0, "y": 0})
-    ball_vel  = ball.get("velocity", {})
     score     = game_state.get("score", {})
-    try:
-        game_time = float(game_state.get("gameTime", 0))
-    except (TypeError, ValueError):
-        game_time = 0.0
-    elapsed_seconds = max(0, int(game_time))
-    minutes, seconds = divmod(elapsed_seconds, 60)
+    game_time = float(game_state.get("gameTime", 0))
     play_mode = game_state.get("playMode", "OPEN_PLAY")
     players   = game_state.get("players", [])
 
@@ -284,18 +255,11 @@ def summarize_state(
 
     # ---- Build header lines --------------------------------------------------
     lines = [
-        f"Time: {minutes}:{seconds:02d} ({elapsed_seconds}s elapsed) | "
-        f"Score: HOME {score.get('home', 0)} - {score.get('away', 0)} AWAY | "
+        f"Time: {game_time:.0f}s | Score: {score.get('home',0)}-{score.get('away',0)} | "
         f"Team: {team_id} ({'HOME' if team_id == 0 else 'AWAY'}) | PlayMode: {play_mode}",
-        f"Ball: pos=({ball_pos.get('x',0):.1f}, {ball_pos.get('y',0):.1f}) "
-        f"vel=({ball_vel.get('x',0):.1f}, {ball_vel.get('y',0):.1f}) "
-        f"held by {ball_status}",
+        f"Ball: ({ball_pos.get('x',0):.1f}, {ball_pos.get('y',0):.1f}) held by {ball_status}",
         f"Your goal at x={my_goal_x:.0f} | Opponent goal at x={opp_goal_x:.0f}",
     ]
-    if "tick" in game_state:
-        lines.append(f"Tick: {game_state['tick']}")
-    if game_state.get("modeTeamId") is not None:
-        lines.append(f"Mode team: {game_state['modeTeamId']}")
 
     if phase_line:
         lines.append(phase_line)
@@ -309,8 +273,7 @@ def summarize_state(
     # ---- My player info with Skill 4: Stamina context ------------------------
     if me:
         pos       = me.get("position", {})
-        velocity  = me.get("velocity", {})
-        raw_stamina = me.get("stamina")
+        stam      = me.get("stamina", 1.0)
         dist_ball = dist(pos, ball_pos)
         has_ball  = holder_is_me(ball, players, team_id, my_player_id)
         extra     = (
@@ -319,10 +282,8 @@ def summarize_state(
         )
 
         stam_annotation = ""
-        stamina_display = "unknown"
         if stamina_context and fmt_stamina:
-            stam_ctx = stamina_context(raw_stamina, game_time)
-            stamina_display = f"{stam_ctx.current:.2f}"
+            stam_ctx = stamina_context(stam, game_time)
             stam_annotation = " " + fmt_stamina(stam_ctx)
 
         # Shoot hint — injected when the player has the ball and is in range
@@ -345,11 +306,7 @@ def summarize_state(
         lines.append(
             f">>> YOUR PLAYER ({position_label}, id={my_player_id}): "
             f"pos=({pos.get('x',0):.1f},{pos.get('y',0):.1f}) "
-            f"vel=({velocity.get('x',0):.1f},{velocity.get('y',0):.1f}) "
-            f"stam={stamina_display}{stam_annotation} distBall={dist_ball:.1f}{extra} hasBall={has_ball}"
-            f" currentAction={me.get('currentAction', 'unknown')}"
-            f" lastAction={me.get('lastAction', 'unknown')}"
-            f" sprinting={me.get('isSprinting', False)}"
+            f"stam={stam:.2f}{stam_annotation} distBall={dist_ball:.1f}{extra} hasBall={has_ball}"
             f"{shoot_hint}"
         )
     lines.append("")
@@ -360,22 +317,13 @@ def summarize_state(
         if _player_idx(p) == my_player_id:
             continue
         pos = p.get("position", {})
-        velocity = p.get("velocity", {})
         pid = _player_idx(p)
         role  = "GK" if pid == 0 else f"P{pid}"
         extra = (
             f" distOppGoal={abs(pos.get('x', 0) - opp_goal_x):.1f}"
             if position_label == "MID" else ""
         )
-        lines.append(
-            f"  {role}(id={pid}): "
-            f"pos=({pos.get('x',0):.1f},{pos.get('y',0):.1f}) "
-            f"vel=({velocity.get('x',0):.1f},{velocity.get('y',0):.1f}) "
-            f"stam={p.get('stamina', 'unknown')} "
-            f"currentAction={p.get('currentAction', 'unknown')} "
-            f"lastAction={p.get('lastAction', 'unknown')} "
-            f"sprinting={p.get('isSprinting', False)}{extra}"
-        )
+        lines.append(f"  {role}(id={pid}): ({pos.get('x',0):.1f},{pos.get('y',0):.1f}){extra}")
 
     # ---- Skill 6: Coach instructions + inferred teammate context -----------
     if read_coach_instructions and infer_teammate_context and format_coordination_for_prompt:
@@ -389,29 +337,9 @@ def summarize_state(
     opp_header = "Opponents (threat-ranked):"
     lines.append(opp_header)
 
-    if assess_threats:
+    if assess_threats and format_threats_for_prompt:
         threats = assess_threats(game_state, team_id)
-        for threat in threats:
-            opponent = next(
-                (
-                    player for player in opponents
-                    if _player_idx(player) == threat.player_id
-                ),
-                {},
-            )
-            pos = opponent.get("position", {})
-            velocity = opponent.get("velocity", {})
-            lines.append(
-                f"  P{threat.player_id}: "
-                f"pos=({pos.get('x',0):.1f},{pos.get('y',0):.1f}) "
-                f"vel=({velocity.get('x',0):.1f},{velocity.get('y',0):.1f}) "
-                f"stam={opponent.get('stamina', 'unknown')} "
-                f"currentAction={opponent.get('currentAction', 'unknown')} "
-                f"lastAction={opponent.get('lastAction', 'unknown')} "
-                f"sprinting={opponent.get('isSprinting', False)} "
-                f"threat={threat.score:.2f} "
-                f"distGoal={threat.distance_to_goal:.1f} {threat.label}"
-            )
+        lines.append(format_threats_for_prompt(threats))  # type: ignore[misc]
     else:
         # Fallback: original flat list
         for p in opponents:

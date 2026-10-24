@@ -40,24 +40,6 @@ def _player_number(player):
         return player.get("playerId")
 
 
-def _player_matches_team(player, team):
-    if player.get("teamId") == team:
-        return True
-
-    team_code = player.get("teamCode")
-    if not isinstance(team_code, str):
-        return False
-
-    normalized_code = team_code.strip().lower()
-    if isinstance(team, str):
-        return normalized_code == team.strip().lower()
-    if team == 0:
-        return normalized_code == "home"
-    if team == 1:
-        return normalized_code == "away"
-    return False
-
-
 def _players(game_state, team_id):
     players = game_state.get("players")
     if not isinstance(players, list):
@@ -81,30 +63,24 @@ def _ball_holder(game_state):
     agent_id = ball.get("possessionAgentId")
     if isinstance(agent_id, str):
         matches = [player for player in players if player.get("agentId") == agent_id]
-        if not matches:
-            try:
-                player_id = int(agent_id.rsplit("_", 1)[-1])
-            except (ValueError, IndexError):
-                return None
+        team_code = ball.get("possessionTeamCode")
+        if team_code:
             matches = [
-                player for player in players
-                if _player_number(player) == player_id
+                player for player in matches
+                if player.get("teamCode", "").lower() == team_code.lower()
             ]
-    else:
-        player_id = ball.get("possessionPlayerId")
-        if player_id is None:
-            return None
-        matches = [
-            player for player in players
-            if _player_number(player) == player_id
-        ]
+        team_id = ball.get("possessionTeamId")
+        if team_id is not None:
+            matches = [player for player in matches if _is_team(player, team_id)]
+        return matches[0] if matches else None
 
-    team = ball.get("possessionTeamCode") or ball.get("possessionTeamId")
-    if team is not None:
-        matches = [
-            player for player in matches
-            if _player_matches_team(player, team)
-        ]
+    player_id = ball.get("possessionPlayerId")
+    if player_id is None:
+        return None
+    matches = [player for player in players if player.get("playerId") == player_id]
+    team_id = ball.get("possessionTeamId")
+    if team_id is not None:
+        matches = [player for player in matches if player.get("teamId") == team_id]
     return matches[0] if matches else None
 
 
@@ -124,15 +100,7 @@ def get_defensive_assignment(event, context=None):
         (player for player in own if _player_number(player) == player_id), None
     )
     if defender is None:
-        return _response({
-            "threats": [],
-            "recommended_mark": None,
-            "action": "HOLD_SHAPE",
-            "warning": (
-                f"Player {player_id} was not found on team {team_id}; "
-                "no defensive assignment was computed."
-            ),
-        })
+        raise ValueError(f"Player {player_id} was not found on team {team_id}")
 
     ball = _ball_position(game_state)
     holder = _ball_holder(game_state)
@@ -143,12 +111,10 @@ def get_defensive_assignment(event, context=None):
         goal_distance = _distance(position, {"x": goal_x, "y": 0})
         ball_distance = _distance(position, ball)
         has_ball = opponent is holder
-        goal_threat = max(0.0, 1.0 - goal_distance / (2 * FIELD_X))
-        score = min(
-            1.0,
-            0.6 * goal_threat
-            + (0.4 if has_ball else 0.0)
-            + (0.1 if ball_distance < 10 and has_ball else 0.0),
+        score = (
+            max(0.0, 1.0 - goal_distance / (2 * FIELD_X))
+            + (0.3 if ball_distance < 10 else 0.15 if ball_distance < 20 else 0)
+            + (0.4 if has_ball else 0)
         )
         threats.append({
             "player_id": _player_number(opponent),
@@ -159,15 +125,11 @@ def get_defensive_assignment(event, context=None):
             "recommended_tightness": "TIGHT" if score > 0.7 else "LOOSE",
         })
     threats.sort(key=lambda threat: threat["threat_score"], reverse=True)
-    target = threats[0] if threats and threats[0]["threat_score"] >= 0.6 else None
+    target = threats[0] if threats else None
     return _response({
         "threats": threats,
         "recommended_mark": target,
-        "action": (
-            "MARK" if target and target["distance_to_defender"] < 30
-            else "HOLD_SHAPE" if target is None
-            else "INTERCEPT"
-        ),
+        "action": "MARK" if target and target["distance_to_defender"] < 30 else "INTERCEPT",
     })
 
 
@@ -193,40 +155,14 @@ def calculate_pass_options(event, context=None):
             default=FIELD_X * 2,
         )
         success = max(0.0, min(1.0, 1.0 - distance / 110 + nearest_opponent / 100))
-        direction = 1 if team_id == 0 else -1
-        progress = (end["x"] - start["x"]) * direction
-        safe_forward = (
-            progress > 0
-            and success >= 0.55
-            and nearest_opponent >= 5
-            and _player_number(teammate) != 0
-        )
-        advancement_bonus = max(-0.2, min(0.2, progress / 55 * 0.2))
-        keeper_penalty = 0.25 if _player_number(teammate) == 0 else 0.0
-        tactical_score = max(
-            0.0,
-            success + advancement_bonus - keeper_penalty,
-        )
         options.append({
             "target_player_id": _player_number(teammate),
             "distance": round(distance, 1),
             "success_probability": round(success, 2),
-            "nearest_opponent_distance": round(nearest_opponent, 1),
-            "tactical_score": round(tactical_score, 2),
-            "progress": round(progress, 1),
-            "safe_forward": safe_forward,
             "type": "THROUGH" if end["x"] * (1 if team_id == 0 else -1) >
                     start["x"] * (1 if team_id == 0 else -1) else "GROUND",
         })
-    has_safe_forward = any(option["safe_forward"] for option in options)
-    options.sort(
-        key=lambda option: (
-            has_safe_forward and option["safe_forward"],
-            option["tactical_score"],
-            option["success_probability"],
-        ),
-        reverse=True,
-    )
+    options.sort(key=lambda option: option["success_probability"], reverse=True)
     return _response({"pass_options": options})
 
 

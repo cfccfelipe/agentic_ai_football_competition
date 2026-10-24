@@ -58,9 +58,7 @@ def assess_threats(game_state: dict, team_id: int) -> list[ThreatInfo]:
     my_goal_x, _  = get_goal_positions(team_id)
     goal_pos       = {"x": my_goal_x, "y": 0.0}
 
-    possession_id, ball_status, we_have_ball = get_possession_info(
-        ball, players, team_id
-    )
+    possession_id, _, we_have_ball = get_possession_info(ball, players, team_id)
     ball_pos = ball.get("position", {"x": 0, "y": 0})
 
     opponents  = [p for p in players if not _is_my_team(p, team_id)]
@@ -80,10 +78,7 @@ def assess_threats(game_state: dict, team_id: int) -> list[ThreatInfo]:
 
         d_goal   = dist(opp_pos, goal_pos)
         d_ball   = dist(opp_pos, ball_pos)
-        is_carrier = (
-            ball_status == f"OPP player {opp_id}"
-            and possession_id == opp_id
-        )
+        is_carrier = (not we_have_ball) and (d_ball < 3.0)
         is_marked  = opp_id in marked_ids
 
         score = _compute_score(

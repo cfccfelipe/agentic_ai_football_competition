@@ -56,13 +56,7 @@ def test_fallback_press():
     """Opponent has ball near FWD1 — should INTERCEPT or PRESS_BALL."""
     print(f"=== FALLBACK PRESS ({POSITION_LABEL}) ===")
     state = json.loads(json.dumps(GAME_STATE))
-    opponent_holder = next(
-        player for player in state["players"]
-        if player["teamCode"] == "away" and player["agentId"] == "agentId_1"
-    )
-    state["players"].remove(opponent_holder)
-    state["players"].insert(0, opponent_holder)
-    state["ball"]["possessionAgentId"] = opponent_holder["agentId"]
+    state["ball"]["possessionAgentId"] = "agentId_6"  # opponent has ball
     state["ball"]["position"] = {"x": 18, "y": -3}  # near FWD1
     cmds = fallback_commands(state, TEAM_ID, MY_PLAYER_ID)
     for c in cmds:

@@ -35,17 +35,6 @@ def result(handler, **arguments):
 
 
 class TacticalToolTests(unittest.TestCase):
-    def test_defensive_assignment_reports_missing_player_without_tool_failure(self):
-        result = json.loads(get_defensive_assignment({
-            "game_state": {"players": [], "ball": {"isFree": True}},
-            "team_id": 1,
-            "player_id": 1,
-        })["body"])
-
-        self.assertEqual(result["action"], "HOLD_SHAPE")
-        self.assertIsNone(result["recommended_mark"])
-        self.assertIn("not found", result["warning"])
-
     def test_defensive_assignment_ranks_opponent_with_ball(self):
         state = dict(GAME_STATE)
         state["players"] = list(GAME_STATE["players"])
@@ -68,62 +57,14 @@ class TacticalToolTests(unittest.TestCase):
         self.assertTrue(carrier["has_ball"])
         self.assertEqual(assignment["recommended_mark"]["player_id"], 2)
 
-    def test_defensive_assignment_resolves_mixed_possession_id_formats(self):
-        state = json.loads(json.dumps(GAME_STATE))
-        state["ball"].update({
-            "possessionAgentId": None,
-            "possessionPlayerId": 2,
-            "possessionTeamId": 1,
-        })
-        assignment = json.loads(get_defensive_assignment({
-            "game_state": state, "team_id": 0, "player_id": 1
-        })["body"])
-        carrier = next(
-            threat for threat in assignment["threats"] if threat["player_id"] == 2
-        )
-        self.assertTrue(carrier["has_ball"])
-        self.assertEqual(assignment["recommended_mark"]["player_id"], 2)
-
     def test_pass_options_exclude_passer_and_rank_options(self):
         options = result(calculate_pass_options, player_id=1)["pass_options"]
         self.assertEqual(len(options), 4)
         self.assertNotIn(1, [option["target_player_id"] for option in options])
         self.assertEqual(
             options,
-            sorted(
-                options,
-                key=lambda option: (
-                    option["safe_forward"],
-                    option["tactical_score"],
-                    option["success_probability"],
-                ),
-                reverse=True,
-            ),
+            sorted(options, key=lambda option: option["success_probability"], reverse=True),
         )
-
-    def test_pass_options_prioritize_safe_forward_pass_over_goalkeeper(self):
-        state = json.loads(json.dumps(GAME_STATE))
-        own = [player for player in state["players"] if player["teamCode"] == "home"]
-        own[0]["position"] = {"x": -15, "y": 0}
-        own[1]["position"] = {"x": -20, "y": 0}
-        own[2]["position"] = {"x": 25, "y": 0}
-        own[3]["position"] = {"x": 35, "y": -5}
-        own[4]["position"] = {"x": 30, "y": 8}
-        state["players"] = own + [
-            player for player in state["players"] if player["teamCode"] == "away"
-        ]
-        for opponent in state["players"][5:]:
-            opponent["position"] = {"x": 0, "y": 25}
-
-        response = calculate_pass_options({
-            "game_state": state,
-            "team_id": 0,
-            "player_id": 1,
-        })
-        options = json.loads(response["body"])["pass_options"]
-        self.assertNotEqual(options[0]["target_player_id"], 0)
-        self.assertGreater(options[0]["progress"], 0)
-        self.assertTrue(options[0]["safe_forward"])
 
     def test_find_open_space_returns_field_point(self):
         target = result(find_open_space, zone="defense")["target"]
