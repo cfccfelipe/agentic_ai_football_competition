@@ -7,8 +7,13 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "lib"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
-from test_helpers import mock_agentcore, GAME_STATE, TEAM_ID
-mock_agentcore()
+if "--llm" in sys.argv:
+    from test_helpers import mock_agentcore, GAME_STATE, TEAM_ID
+    mock_agentcore()
+else:
+    from test_helpers import mock_agentcore_gateway, GAME_STATE, TEAM_ID
+    os.environ.setdefault("AGENTCORE_GATEWAY_TACTICAL_TOOLS_URL", "http://localhost")
+    mock_agentcore_gateway()
 
 from state import summarize_state
 from parsing import parse_commands
@@ -91,16 +96,16 @@ def test_parse():
 def test_llm():
     print(f"=== LLM TEST ({POSITION_LABEL}) ===")
     try:
-        from strands import Agent
-        from strands.models import BedrockModel
-
-        model = BedrockModel(model_id="us.amazon.nova-lite-v1:0")
-        agent = Agent(model=model, system_prompt=SYSTEM_PROMPT)
+        from main import agent, mcp_client
 
         summary = summarize_state(GAME_STATE, TEAM_ID, MY_PLAYER_ID, POSITION_LABEL)
-        print(f"Sending to Nova Lite ({len(summary)} chars)...")
+        summary += "\n\nRaw game state for tactical tools: " + json.dumps(
+            GAME_STATE, separators=(",", ":")
+        )
+        print(f"Sending to Nova Lite and tactical-tools gateway ({len(summary)} chars)...")
 
-        response = agent(summary)
+        with mcp_client:
+            response = agent(summary)
         response_text = str(response)
         print(f"\nRaw response ({len(response_text)} chars):")
         print(response_text[:500])

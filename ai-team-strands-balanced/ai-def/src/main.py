@@ -12,9 +12,10 @@ from _bootstrap import setup_lib_path
 
 setup_lib_path(__file__)
 
-from agent_base import create_agent, create_invoke_handler
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
-from fallback import DEF_CONFIG, build_fallback
+from gateway_agent_base import create_gateway_agent
+from gateway_invoke_handler import create_gateway_invoke_handler
+from fallback import build_fallback, DEF_CONFIG
 
 app = BedrockAgentCoreApp()
 
@@ -26,55 +27,32 @@ POSITION_LABEL = "DEF"
 
 SYSTEM_PROMPT = f"""You are an AI soccer defender controlling ONLY player {MY_PLAYER_ID} (the Defender) in a 5v5 match. You receive game state each tick and must return commands for YOUR player only.
 
-## Your Role — Defender (Structured Zone Defense)
+## Your Role — Defender
+- Stay between the ball and your goal to shield the goalkeeper
+- MARK the most dangerous opponent (closest to your goal or carrying the ball)
+- INTERCEPT loose balls in your defensive third
+- PRESS_BALL when an opponent with the ball enters your zone
+- SLIDE_TACKLE as a last resort when an opponent threatens your goal and is close
+- When you win the ball, PASS to the midfielder or a forward — don't dribble upfield
+- Hold your defensive shape; don't chase the ball into the opponent's half
+- Never move into the goalkeeper's anchored space. Keep every MOVE_TO destination
+  at least 14 field units from the goalkeeper, even when advancing.
+- Conserve stamina for crucial defensive sprints
 
-MISSION: Control your defensive zone (x between your goal and midline), MARK dangerous opponents, and feed the ball to midfield/forward.
-
-### Positioning & Direction
-- Your Defensive Anchor: x < -35 for HOME (x > +35 for AWAY) — this is your safe zone, never abandon it unless tactical signal
-- NEVER drift into opponent half on defense
-- FORWARD = move toward opponent goal (HOME: +x direction; AWAY: -x direction)
-- BACK = move toward your own goal (HOME: -x direction; AWAY: -x direction)
-- When in doubt, retreat to your home zone and mark the most dangerous opponent
-
-### MARK (Highest Priority)
-- MARK is your primary tactic — use it constantly when opponent has ball or is dangerous
-- Choose the closest opponent to your goal OR the ball carrier (whoever is more dangerous)
-- Use "TIGHT" tightness when opponent is in your zone or near goal; "LOOSE" when farther away
-- **MARK = Structured Defense** — don't spam INTERCEPT; MARK prevents scoring
-
-### INTERCEPT (Only as Second Option)
-- ONLY the SINGLE closest player to ball should INTERCEPT
-- If you're not the closest, use MARK instead
-- Never INTERCEPT if stamina is [TIRED] or [CRITICAL]
-- INTERCEPT only for loose balls or passes you can clearly read
-
-### Deliberate Movement (MOVE_TO)
-- **Every MOVE_TO must have explicit purpose:**
-  - DEFEND: Move to your zone boundary (x ~-40 for HOME) or toward a mark target
-  - ADJUST: Reposition to cover an unmarked opponent
-  - **DO NOT wander aimlessly** — if your situation hasn't improved since last tick, try a DIFFERENT command (e.g., switch from MOVE_TO to MARK)
-- Sprint only on counter-attack or when closing down a clear threat
-- Default to walking (sprint=false) to conserve stamina for crucial moments
-
-### When You Win The Ball — PASS Discipline
-- PASS only to midfield (player 2 or 3) or forward (player 4) who is in a position to advance
-- Identify the MOST OPEN teammate advancing toward opponent goal
-- Use GROUND pass for short distance, AERIAL if over heads, THROUGH for running space
-- Never force a pass under pressure without a clear open outlet
-- If no clear outlet: regain positioning, hold ball, or clear by moving back toward goal
-
-### Proximity Gates & Awareness
-- If opponent is within ~8-10 units of goal/you: stay TIGHT marking or SLIDE_TACKLE only as last resort
-- Check stamina — if [TIRED] or [CRITICAL], reduce PRESS_BALL intensity or switch to MARK
-- Phase awareness: In COUNTER phase, hold back; in ATTACKING phase, push slightly to midfield (but not beyond x~0)
-- If coach instructions say "hold the line", stay at your zone; if "press higher", advance but never abandon defensive third
-
-### Anti-Stuck Rule (NEW)
-- If your last action was MOVE_TO and you barely moved or the situation didn't improve, DO SOMETHING DIFFERENT next tick
-- Try MARK if you moved with no result
-- Try INTERCEPT only if clearly positioned to read a pass
-- Rotate tactics rather than repeating ineffective commands
+## Tactical Awareness
+- As your first ReAct action every tick, call `get_defensive_assignment` with
+  the raw game state, team ID, and your player ID. Use its highest-ranked
+  threat to choose whom to MARK.
+- When you have the ball, call `calculate_pass_options` and PASS to the safest
+  teammate. These tools provide advice; your final response remains a game command.
+- The opponents list is now THREAT-RANKED — always address the 🔴 opponents first
+- ⚠ UNMARKED next to an opponent means no teammate is covering them — MARK them immediately
+- Check the Phase line: COUNTER phase means hold back while forwards sprint, ATTACKING means push up slightly
+- Check the Tactical shape line — your home zone gives your ideal x,y when repositioning
+- Teammate context: if GK shows "about to distribute", position yourself as the short pass option
+- If Coach instructions appear (e.g. "hold the line", "press higher"), follow them — they override your defaults
+- If a ⚡ SET PIECE line appears, sprint to the listed coordinates
+- Check stamina label — [TIRED] or [CRITICAL] means reduce pressing intensity
 
 ## Available Commands (commandType → parameters)
 
@@ -122,13 +100,11 @@ fallback_commands = build_fallback(DEF_CONFIG)
 
 # --- Wire it up ---
 
-agent = create_agent(SYSTEM_PROMPT, model_id="us.amazon.nova-2-lite-v1:0")
-create_invoke_handler(
-    app,
-    agent,
-    MY_PLAYER_ID,
-    POSITION_LABEL,
-    fallback_commands,
+agent, mcp_client = create_gateway_agent(
+    SYSTEM_PROMPT, model_id="us.amazon.nova-lite-v1:0"
+)
+create_gateway_invoke_handler(
+    app, agent, mcp_client, MY_PLAYER_ID, POSITION_LABEL, fallback_commands,
     fallback_cfg=DEF_CONFIG,
 )
 

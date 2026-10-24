@@ -39,6 +39,7 @@ Every agent's `main.py` follows the same pattern:
 
 The shared `lib/` provides:
 - `agent_base.py` — agent factory + invoke handler with 3-layer error handling (LLM → fallback → last-resort)
+- `gateway_agent_base.py` / `gateway_invoke_handler.py` — MCP tools wiring for the defender
 - `fallback.py` — configurable rule-based fallback per position
 - `parsing.py` — extracts JSON commands from LLM responses
 - `state.py` — summarizes game state into text for the LLM
@@ -68,6 +69,10 @@ python3 ai-gk/test_local.py
 
 # Test with a real LLM call (needs AWS credentials)
 python3 ai-gk/test_local.py --llm
+
+# Defender's LLM test also needs the deployed MCP gateway URL
+AGENTCORE_GATEWAY_TACTICAL_TOOLS_URL="https://<gateway-endpoint>" \
+  python3 ai-def/test_local.py --llm
 ```
 
 ### 2. Deploy to AWS
@@ -90,6 +95,8 @@ The deploy script:
 4. Removes the injected `lib/` copies on success, failure, or Ctrl+C
 
 The shared `lib/` remains a single source of truth — the copies are temporary and never committed.
+From Linux or WSL, use `python3 deploy_all.py` for this CDK flow; the older
+`deploy-all.sh` flow does not provision the MCP gateway or its Lambda tools.
 
 
 ## Creating Your Own Agent
@@ -173,6 +180,20 @@ Commands are what the LLM returns to control the player each tick.
 **Tactical**:
 - `SET_STANCE` — stance (0=Balanced, 1=Attack, 2=Defend)
 - `CLEAR_OVERRIDE` — return to default AI
+
+## Defender tactical tools
+
+The defender connects to the `tactical-tools` AgentCore MCP gateway. CDK deploys
+four analysis Lambda tools (`get_defensive_assignment`, `calculate_pass_options`,
+`find_open_space`, and `evaluate_shot`) from `gateway_tools/`, and injects the
+gateway URL into the defender runtime. Its system prompt asks it to consult the
+defensive-assignment tool each tick and pass-options when it has possession.
+
+These are analysis tools, not game-action executors. The agent still returns the
+single JSON command expected by the match engine; the engine executes commands
+such as `MARK` and `PASS`. To provision the gateway and tools, run the standard
+`python deploy_all.py` deployment. Traces for the defender should then include
+MCP tool spans when the model calls a tool.
 
 ## Error Handling
 

@@ -83,11 +83,13 @@ def mock_agentcore_memory():
 
 class _FakeMCPClient:
     """Minimal stand-in for strands MCPClient."""
+    fake_tool = None
+
     def __init__(self, transport_factory=None):
         pass
 
     def list_tools_sync(self):
-        return []
+        return [self.fake_tool] if self.fake_tool is not None else []
 
     def __enter__(self):
         return self
@@ -101,7 +103,16 @@ def mock_agentcore_gateway():
 
     Call this INSTEAD of mock_agentcore() when testing gateway agents.
     """
+    import strands
+    from strands.tools import tool
+
     mock_agentcore()
+
+    def fake_tactical_tool(game_state: dict, team_id: int, player_id: int):
+        """Stand-in MCP tool used by offline import tests."""
+        return {"team_id": team_id, "player_id": player_id}
+
+    _FakeMCPClient.fake_tool = tool(fake_tactical_tool)
 
     # Mock MCP client modules
     mcp_mod = type(sys)("mcp")
@@ -114,12 +125,16 @@ def mock_agentcore_gateway():
     sys.modules["mcp.client.streamable_http"] = mcp_http_mod
 
     # Mock strands MCP tools
-    strands_tools_mod = type(sys)("strands.tools.mcp")
+    strands_tools_mod = type(sys)("strands.tools")
+    strands_mcp_mod = type(sys)("strands.tools.mcp")
     strands_mcp_client_mod = type(sys)("strands.tools.mcp.mcp_client")
     strands_mcp_client_mod.MCPClient = _FakeMCPClient
 
-    sys.modules.setdefault("strands.tools", type(sys)("strands.tools"))
-    sys.modules["strands.tools.mcp"] = strands_tools_mod
+    strands_mcp_mod.mcp_client = strands_mcp_client_mod
+    strands_tools_mod.mcp = strands_mcp_mod
+    strands.tools = strands_tools_mod
+    sys.modules["strands.tools"] = strands_tools_mod
+    sys.modules["strands.tools.mcp"] = strands_mcp_mod
     sys.modules["strands.tools.mcp.mcp_client"] = strands_mcp_client_mod
 
 
