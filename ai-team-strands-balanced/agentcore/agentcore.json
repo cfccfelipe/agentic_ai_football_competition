@@ -59,7 +59,140 @@
   "credentials": [],
   "evaluators": [],
   "onlineEvalConfigs": [],
-  "agentCoreGateways": [],
+  "agentCoreGateways": [
+    {
+      "name": "tactical-tools",
+      "description": "Tactical analysis MCP tools for the AI football team",
+      "authorizerType": "NONE",
+      "protocolType": "MCP",
+      "targets": [
+        {
+          "name": "calculate-pass-options",
+          "targetType": "lambda",
+          "toolDefinitions": [
+            {
+              "name": "calculate_pass_options",
+              "description": "Rank teammate passing options by distance and interception risk.",
+              "inputSchema": {
+                "type": "object",
+                "properties": {
+                  "game_state": {"type": "object", "description": "Raw game state."},
+                  "team_id": {"type": "integer", "description": "Team ID: 0 or 1."},
+                  "player_id": {"type": "integer", "description": "Player ID: 0-4."}
+                },
+                "required": ["game_state", "team_id", "player_id"]
+              }
+            }
+          ],
+          "compute": {
+            "host": "Lambda",
+            "pythonVersion": "PYTHON_3_12",
+            "implementation": {
+              "language": "Python",
+              "path": "gateway_tools/",
+              "handler": "tool_handlers.calculate_pass_options"
+            },
+            "timeout": 30,
+            "memorySize": 512
+          }
+        },
+        {
+          "name": "evaluate-shot",
+          "targetType": "lambda",
+          "toolDefinitions": [
+            {
+              "name": "evaluate_shot",
+              "description": "Estimate shot quality from goal distance and nearby defenders.",
+              "inputSchema": {
+                "type": "object",
+                "properties": {
+                  "game_state": {"type": "object", "description": "Raw game state."},
+                  "team_id": {"type": "integer", "description": "Team ID: 0 or 1."},
+                  "player_id": {"type": "integer", "description": "Player ID: 0-4."}
+                },
+                "required": ["game_state", "team_id", "player_id"]
+              }
+            }
+          ],
+          "compute": {
+            "host": "Lambda",
+            "pythonVersion": "PYTHON_3_12",
+            "implementation": {
+              "language": "Python",
+              "path": "gateway_tools/",
+              "handler": "tool_handlers.evaluate_shot"
+            },
+            "timeout": 30,
+            "memorySize": 512
+          }
+        },
+        {
+          "name": "find-open-space",
+          "targetType": "lambda",
+          "toolDefinitions": [
+            {
+              "name": "find_open_space",
+              "description": "Find a position in a specified tactical zone with minimal nearby congestion.",
+              "inputSchema": {
+                "type": "object",
+                "properties": {
+                  "game_state": {"type": "object", "description": "Raw game state."},
+                  "team_id": {"type": "integer", "description": "Team ID: 0 or 1."},
+                  "zone": {
+                    "type": "string",
+                    "enum": ["defense", "midfield", "attack"],
+                    "description": "Field zone to search."
+                  }
+                },
+                "required": ["game_state", "team_id"]
+              }
+            }
+          ],
+          "compute": {
+            "host": "Lambda",
+            "pythonVersion": "PYTHON_3_12",
+            "implementation": {
+              "language": "Python",
+              "path": "gateway_tools/",
+              "handler": "tool_handlers.find_open_space"
+            },
+            "timeout": 30,
+            "memorySize": 512
+          }
+        },
+        {
+          "name": "get-defensive-assignment",
+          "targetType": "lambda",
+          "toolDefinitions": [
+            {
+              "name": "get_defensive_assignment",
+              "description": "Rank opposing players by threat and recommend a defender's marking target.",
+              "inputSchema": {
+                "type": "object",
+                "properties": {
+                  "game_state": {"type": "object", "description": "Raw game state."},
+                  "team_id": {"type": "integer", "description": "Team ID: 0 or 1."},
+                  "player_id": {"type": "integer", "description": "Player ID: 0-4."}
+                },
+                "required": ["game_state", "team_id", "player_id"]
+              }
+            }
+          ],
+          "compute": {
+            "host": "Lambda",
+            "pythonVersion": "PYTHON_3_12",
+            "implementation": {
+              "language": "Python",
+              "path": "gateway_tools/",
+              "handler": "tool_handlers.get_defensive_assignment"
+            },
+            "timeout": 30,
+            "memorySize": 512
+          }
+        }
+      ]
+    }
+  ],
   "policyEngines": [],
   "configBundles": [],
   "abTests": [],

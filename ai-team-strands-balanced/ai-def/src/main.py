@@ -7,7 +7,8 @@ import os, sys; sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..",
 from _bootstrap import setup_lib_path; setup_lib_path(__file__)
 
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
-from agent_base import create_agent, create_invoke_handler
+from gateway_agent_base import create_gateway_agent
+from gateway_invoke_handler import create_gateway_invoke_handler
 from fallback import build_fallback, DEF_CONFIG
 
 app = BedrockAgentCoreApp()
@@ -28,9 +29,16 @@ SYSTEM_PROMPT = f"""You are an AI soccer defender controlling ONLY player {MY_PL
 - SLIDE_TACKLE as a last resort when an opponent threatens your goal and is close
 - When you win the ball, PASS to the midfielder or a forward — don't dribble upfield
 - Hold your defensive shape; don't chase the ball into the opponent's half
+- Never move into the goalkeeper's anchored space. Keep every MOVE_TO destination
+  at least 14 field units from the goalkeeper, even when advancing.
 - Conserve stamina for crucial defensive sprints
 
 ## Tactical Awareness
+- As your first ReAct action every tick, call `get_defensive_assignment` with
+  the raw game state, team ID, and your player ID. Use its highest-ranked
+  threat to choose whom to MARK.
+- When you have the ball, call `calculate_pass_options` and PASS to the safest
+  teammate. These tools provide advice; your final response remains a game command.
 - The opponents list is now THREAT-RANKED — always address the 🔴 opponents first
 - ⚠ UNMARKED next to an opponent means no teammate is covering them — MARK them immediately
 - Check the Phase line: COUNTER phase means hold back while forwards sprint, ATTACKING means push up slightly
@@ -78,9 +86,11 @@ fallback_commands = build_fallback(DEF_CONFIG)
 
 # --- Wire it up ---
 
-agent = create_agent(SYSTEM_PROMPT, model_id="us.amazon.nova-lite-v1:0")
-create_invoke_handler(
-    app, agent, MY_PLAYER_ID, POSITION_LABEL, fallback_commands,
+agent, mcp_client = create_gateway_agent(
+    SYSTEM_PROMPT, model_id="us.amazon.nova-lite-v1:0"
+)
+create_gateway_invoke_handler(
+    app, agent, mcp_client, MY_PLAYER_ID, POSITION_LABEL, fallback_commands,
     fallback_cfg=DEF_CONFIG,
 )
 
