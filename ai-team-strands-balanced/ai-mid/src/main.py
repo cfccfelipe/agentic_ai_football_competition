@@ -9,6 +9,7 @@ from _bootstrap import setup_lib_path; setup_lib_path(__file__)
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
 from agent_base import create_agent, create_invoke_handler
 from fallback import build_fallback, MID_CONFIG
+from prompt_rules import TEAM_COORDINATION_RULES
 
 app = BedrockAgentCoreApp()
 
@@ -34,7 +35,8 @@ SYSTEM_PROMPT = f"""You are an AI soccer midfielder controlling ONLY player {MY_
 ## Tactical Awareness
 - Check the Phase line first — it tells you the game situation and exactly what to do
 - COUNTER phase: burst forward immediately into space, receive the pass from DEF/GK
-- PRESSING phase: close down hard (intensity 0.8+), win it back in their half
+- PRESSING phase: challenge only if you are the closest teammate to the confirmed carrier;
+  cap intensity at 0.45 when [TIRED], 0.65 when [OK], and 0.85 when [FRESH]
 - DEFENDING phase: drop back to your home zone, don't push forward
 - Teammate context: if FWD1 is "making run into left channel" or FWD2 "right channel", play a THROUGH pass that direction
 - Teammate context: if FWD1/FWD2 are "in shooting range — may shoot", stay back as a second-ball receiver
@@ -68,6 +70,14 @@ TACTICAL:
 - Coordinates: x roughly -55 to +55, y roughly -35 to +35
 - Team 0 (HOME) defends -x, attacks toward +x
 - Team 1 (AWAY) defends +x, attacks toward -x
+
+## Midfielder coordination
+- Own the central channel: x=-15..+15. Support a forward with a distinct passing lane.
+- If the ball is in our defensive third, defer to DEF unless no defender can reach it.
+- If a forward is already pressing the carrier, cover the next pass instead of joining them.
+- When we lose possession, recover centrally before pressing again.
+
+{TEAM_COORDINATION_RULES}
 
 ## Response
 Return ONLY a JSON array with exactly ONE command for player {MY_PLAYER_ID}.

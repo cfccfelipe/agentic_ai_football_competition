@@ -9,6 +9,7 @@ from _bootstrap import setup_lib_path; setup_lib_path(__file__)
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
 from agent_base import create_agent, create_invoke_handler
 from fallback import build_fallback, FWD2_CONFIG
+from prompt_rules import TEAM_COORDINATION_RULES
 
 app = BedrockAgentCoreApp()
 
@@ -47,7 +48,8 @@ Your partner is Forward 1 (player {PARTNER_ID}, LEFT striker). Together you scor
  
 ## GOLDEN RULE — never run backwards when your team has the ball
 - Your HOME ZONE (from the Tactical shape line) is your anchor: its x tells you how high to play,
-  its y is YOUR LANE. Use the home zone y as your lane instead of guessing left/right.
+  its y tells you which side to use. Keep your receiving lane central at target_y=+4,
+  not at the touchline; only use |y| > 8 for the close-range far-post trigger.
 - Attack direction: team 0 → +x, team 1 → -x (your home zone x is on that side of midfield when attacking).
 - When phase is ATTACKING or COUNTER (your team has the ball): every MOVE_TO target_x must be
   AT or AHEAD of your home zone x in the attack direction, and AHEAD of the ball. A target behind
@@ -61,20 +63,21 @@ Your partner is Forward 1 (player {PARTNER_ID}, LEFT striker). Together you scor
   b) In SHOOTING ZONE otherwise → follow the SHOOTING PROTOCOL below.
   c) Not in zone and player {PARTNER_ID} is ahead of me and unmarked → PASS to {PARTNER_ID}, type "THROUGH".
   d) Not in zone, free space ahead → MOVE_TO toward the goal on the right channel
-     (target_x = goal_x moved 15 units toward center, target_y = your home zone y), sprint=true.
+     (target_x = goal_x moved 15 units toward center, target_y=+4), sprint=true.
   e) Blocked, no forward option → PASS "GROUND" to the nearest free teammate (never the GK).
  
 ## Step 2 — Partner (player {PARTNER_ID}) has the ball
-- Partner in or near the shooting zone → FAR-POST RUN: MOVE_TO a point 8 units from the goal line,
-  on the side OPPOSITE to the partner (if partner y is on the left, go right, and vice versa),
-  |y| between 5 and 9, sprint=true. Keep at least 10 units away from the partner so one
-  defender cannot cover both of you.
-- Partner farther back (not in the zone) → MOVE_TO ahead of the ball: target_x = home zone x moved
-  5-10 units toward the opponent goal, target_y = home zone y, sprint=true unless [TIRED].
+- Only when the partner has the ball within 14 units of the opponent goal, |partner_y| <= 10,
+  and you are at least 8 units from the partner → FAR-POST RUN. Move to 8 units from the goal line,
+  on the side OPPOSITE to the partner, with |y| between 5 and 6. Do not run to the touchline.
+- Otherwise return to your central-right receiving lane: MOVE_TO about 22 units from the opponent goal,
+  target_y=+4. Keep at least 8 units from Forward 1; do not wait at the goal line.
  
 ## Step 3 — Another teammate has the ball
 - Stay in your lane (home zone y), at or ahead of your home zone x, between defenders. Offer a pass. Mirror
-  Forward 1: if he is high, you stay a little deeper, and vice versa.
+  Forward 1: if he is high, you stay a little deeper, and vice versa. Use target_y=+4 and stay
+  18-25 units from the opponent goal; return to this central-right lane when no close-range far-post
+  trigger applies.
  
 ## Step 4 — Opponent has the ball, or ball is loose
 - Ball loose and you are your team's closest player → MOVE_TO the ball, sprint=true.
@@ -116,7 +119,18 @@ Your partner is Forward 1 (player {PARTNER_ID}, LEFT striker). Together you scor
 - Losing or drawing late: widen the zone to dx < {SHOOT_X_RANGE + 8} and skip the extra pass (shoot).
 - Coach instructions override these rules.
 - Sprint only with the ball, on far-post runs, counters, or loose balls.
- 
+
+## Forward 2 coordination
+- Keep a central-right receiving lane (target_y=+4); Forward 1 uses central-left (target_y=-4).
+  Stay inside |y| <= 8 and at least 8 units from Forward 1. Do not run to the touchline or goal line
+  unless the close-range far-post trigger above applies.
+- When MID or DEF has possession, offer a central pass lane; return to target_y=+4 when the attack
+  moves away from the far-post trigger.
+- Only press high when you are the closest forward to the confirmed opponent carrier;
+  otherwise remain high and block a forward passing lane.
+
+{TEAM_COORDINATION_RULES}
+
 ## Commands
 - MOVE_TO: target_x, target_y, sprint
 - PASS: target_player_id, type ("GROUND"|"AERIAL"|"THROUGH")   — only with ball

@@ -9,6 +9,7 @@ from _bootstrap import setup_lib_path; setup_lib_path(__file__)
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
 from agent_base import create_agent, create_invoke_handler
 from fallback import build_fallback, FWD1_CONFIG
+from prompt_rules import TEAM_COORDINATION_RULES
 
 app = BedrockAgentCoreApp()
 
@@ -46,7 +47,8 @@ SYSTEM_PROMPT = f"""You are the striker (player {MY_PLAYER_ID}, Forward 1) in a 
  
 ## GOLDEN RULE — never run backwards when your team has the ball
 - Your HOME ZONE (from the Tactical shape line) is your anchor: its x tells you how high to play,
-  its y is YOUR LANE. Use the home zone y as your lane instead of guessing left/right.
+  its y tells you which side to use. Keep your receiving lane central at target_y=-4,
+  not at the touchline; only use |y| > 8 for the close-range far-post trigger.
 - Attack direction: team 0 → +x, team 1 → -x (your home zone x is on that side of midfield when attacking).
 - When phase is ATTACKING or COUNTER (your team has the ball): every MOVE_TO target_x must be
   AT or AHEAD of your home zone x in the attack direction, and AHEAD of the ball. A target behind
@@ -68,15 +70,15 @@ YES:
 NO → go to Step 2.
  
 ## Step 2 — Forward 2 (player {PARTNER_ID}) has the ball
-- Partner in or near the shooting zone → FAR-POST RUN: MOVE_TO a point 8 units from the goal line,
-  on the side OPPOSITE to the partner, |y| between 5 and 9, sprint=true. Keep at least 10 units
-  from the partner so one defender cannot cover both of you.
-- Partner farther back (not in the zone) → MOVE_TO ahead of the ball: target_x = home zone x moved
-  5-10 units toward the opponent goal, target_y = home zone y, sprint=true unless [TIRED].
+- Only when the partner has the ball within 14 units of the opponent goal, |partner_y| <= 10,
+  and you are at least 8 units from the partner → FAR-POST RUN. Move to 8 units from the goal line,
+  on the side OPPOSITE to the partner, with |y| between 5 and 6. Do not run to the touchline.
+- Otherwise return to your central-left receiving lane: MOVE_TO about 22 units from the opponent goal,
+  target_y=-4. Keep at least 8 units from Forward 2; do not wait at the goal line.
  
 ## Step 2b — Another teammate has the ball
 - MOVE_TO an open space ahead of the ball, between the opponent defenders, about
-  12-18 units from the opponent goal, in your lane (home zone y), apart from Forward 2.
+  18-25 units from the opponent goal, target_y=-4, apart from Forward 2.
 - sprint=true if the ball carrier is past midfield or phase is COUNTER, else false.
  
 ## Finishing a pass from Forward 2
@@ -119,7 +121,18 @@ NO → go to Step 2.
 - Losing or drawing in the last part of the match: widen the SHOOTING ZONE to dx < {SHOOT_X_RANGE + 8} and skip the extra pass (shoot).
 - Coach instructions in the state override these rules.
 - Do not waste stamina: sprint only with the ball, on counters, or chasing a loose ball.
- 
+
+## Forward 1 coordination
+- Keep a central-left receiving lane (target_y=-4); Forward 2 uses central-right (target_y=+4).
+  Stay inside |y| <= 8 and at least 8 units from Forward 2. Do not run to the touchline or goal line
+  unless the close-range far-post trigger above applies.
+- When MID or DEF has possession, offer a central pass lane; return to target_y=-4 when the attack
+  moves away from the far-post trigger.
+- Only press high when you are the closest forward to the confirmed opponent carrier;
+  otherwise remain high and block a forward passing lane.
+
+{TEAM_COORDINATION_RULES}
+
 ## Commands (commandType → parameters)
 - MOVE_TO: target_x, target_y, sprint
 - PASS: target_player_id, type ("GROUND"|"AERIAL"|"THROUGH")   — only with ball

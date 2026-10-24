@@ -78,7 +78,7 @@ AGENTCORE_GATEWAY_TACTICAL_TOOLS_URL="https://<gateway-endpoint>" \
 ### 2. Deploy to AWS
 
 ```bash
-# Deploy all 5 agents
+# Deploy the gateway and all 5 standalone agents
 AWS_DEFAULT_REGION=us-east-1 python deploy_all.py
 ```
 
@@ -90,13 +90,25 @@ python deploy_all.py
 
 The deploy script:
 1. Runs `cdk bootstrap` (idempotent — safe to run every time)
-2. Temporarily copies the shared `lib/` directory into each agent's source directory
-3. Runs `agentcore deploy` once to deploy all agents via CDK
-4. Removes the injected `lib/` copies on success, failure, or Ctrl+C
+2. Deploys the tactical-tools gateway and its four Lambda targets through CDK
+3. Deploys the five standalone `ai_*` runtimes through `deploy-all.sh`
+4. Injects the gateway URL through the standalone toolkit's `--env` option
 
-The shared `lib/` remains a single source of truth — the copies are temporary and never committed.
-From Linux or WSL, use `python3 deploy_all.py` for this CDK flow; the older
-`deploy-all.sh` flow does not provision the MCP gateway or its Lambda tools.
+The CDK project owns only the gateway; the standalone deployment script owns the
+five `ai_*` runtimes. Keeping these resource sets separate prevents duplicate
+`TeamStrandsBalanced_ai_*` runtimes. Run `python3 deploy_all.py` from Linux/WSL or
+Git Bash; use `deploy-all.sh ai-def` to update only the defender after the gateway
+has been deployed.
+
+### AgentCore tactical evaluations
+
+The AgentCore project defines online LLM-as-a-judge evaluations for MID role
+discipline, possession progression, and five-player shape feasibility. The
+online configuration samples 5% of MID sessions from CloudWatch; see
+[`docs/agentcore-football-evals.md`](../docs/agentcore-football-evals.md) for
+the scoring rubric and how to inspect results. The proposed 1-2-1-2 is not
+valid for this 5-player runtime, so the shape evaluator explicitly flags the
+player-count mismatch rather than assuming a formation change.
 
 
 ## Creating Your Own Agent
@@ -188,12 +200,20 @@ four analysis Lambda tools (`get_defensive_assignment`, `calculate_pass_options`
 `find_open_space`, and `evaluate_shot`) from `gateway_tools/`, and injects the
 gateway URL into the defender runtime. Its system prompt asks it to consult the
 defensive-assignment tool each tick and pass-options when it has possession.
+The runtime calls the defensive-assignment tool directly each tick and calls
+pass-options only when the defender has the ball. The model receives those results
+as context, not as callable model tools, avoiding malformed Nova Lite `ToolUse`
+sequences. This caps tactical MCP calls at two per tick and the model to one turn.
 
 These are analysis tools, not game-action executors. The agent still returns the
 single JSON command expected by the match engine; the engine executes commands
 such as `MARK` and `PASS`. To provision the gateway and tools, run the standard
 `python deploy_all.py` deployment. Traces for the defender should then include
-MCP tool spans when the model calls a tool.
+MCP tool spans for the backend's direct MCP calls.
+
+The CDK runtime is named `TeamStrandsBalanced_ai_def_agent`; it is distinct from
+the legacy standalone runtime named `ai_def_agent`. The match must invoke the
+CDK runtime to use the gateway URL injected by this deployment.
 
 ## Error Handling
 

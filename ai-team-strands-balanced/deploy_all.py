@@ -19,51 +19,14 @@ resolved by shelling out to the AWS CLI, which is already a prerequisite).
 
 import json
 import os
-import stat
 import sys
 import shutil
-import signal
 import subprocess
 from pathlib import Path
 
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
-LIB_SRC = SCRIPT_DIR.parent / "lib"
 ALL_AGENTS = ["ai-gk", "ai-def", "ai-mid", "ai-fwd1", "ai-fwd2"]
-agents = ALL_AGENTS
-
-_injected: list[Path] = []
-
-
-# ── Cleanup ───────────────────────────────────────────────────────────────────
-
-def rmtree(path):
-    # On Windows, rmtree fails on read-only files — clear the bit and retry.
-    def _onerror(func, p, exc_info):
-        os.chmod(p, stat.S_IWRITE)
-        func(p)
-    shutil.rmtree(path, onerror=_onerror)
-
-
-def cleanup():
-    for agent_dir in _injected:
-        lib_copy = agent_dir / "lib"
-        if lib_copy.exists():
-            rmtree(lib_copy)
-    if _injected:
-        print("\nCleaned up injected files from agent directories.")
-
-
-def _signal_handler(sig, frame):
-    print("\nInterrupted — cleaning up...")
-    cleanup()
-    sys.exit(1)
-
-
-signal.signal(signal.SIGINT, _signal_handler)
-signal.signal(signal.SIGTERM, _signal_handler)
-if hasattr(signal, "SIGBREAK"):  # Windows Ctrl+Break
-    signal.signal(signal.SIGBREAK, _signal_handler)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -184,36 +147,10 @@ try:
     run(["cdk", "bootstrap", f"aws://{account_id}/{region}"])
     print()
 
-    # ── Inject lib/ into each agent dir ──────────────────────────────────────
-
-    for agent in agents:
-        agent_dir = SCRIPT_DIR / agent
-
-        if not agent_dir.is_dir():
-            print(f"ERROR: Agent directory not found: {agent_dir}")
-            sys.exit(1)
-
-        print("==========================================")
-        print(f"  Preparing: {agent}")
-        print("==========================================")
-
-        lib_dest = agent_dir / "lib"
-        if lib_dest.exists():
-            rmtree(lib_dest)
-        shutil.copytree(
-            LIB_SRC,
-            lib_dest,
-            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
-        )
-
-        _injected.append(agent_dir)
-        print(f"  Ready: {agent_dir}")
-        print()
-
-    # ── Deploy all agents in one CDK call ────────────────────────────────────
+    # ── Deploy gateway infrastructure through CDK ────────────────────────────
 
     print("==========================================")
-    print("  Deploying via CDK (agentcore deploy)")
+    print("  Deploying tactical-tools gateway via CDK")
     print("==========================================")
     run(
         ["agentcore", "deploy", "--yes"],
@@ -221,18 +158,31 @@ try:
         env={**os.environ, "AWS_DEFAULT_REGION": region},
     )
 
+    # ── Deploy the five standalone ai_* runtimes ─────────────────────────────
+
+    bash = shutil.which("bash")
+    if not bash:
+        raise RuntimeError(
+            "Bash is required to deploy the standalone runtimes. "
+            "Run this command from WSL or Git Bash."
+        )
+    print()
+    print("==========================================")
+    print("  Deploying the five standalone ai_* runtimes")
+    print("==========================================")
+    run(
+        [bash, str(SCRIPT_DIR / "deploy-all.sh")],
+        cwd=SCRIPT_DIR,
+        env={**os.environ, "AWS_DEFAULT_REGION": region},
+    )
+
 except subprocess.CalledProcessError:
     print("\nDeployment failed. Check the output above.")
-    cleanup()
     sys.exit(1)
 
 except Exception as e:
     print(f"\nUnexpected error: {e}")
-    cleanup()
     sys.exit(1)
-
-else:
-    cleanup()
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 
@@ -240,8 +190,8 @@ print()
 print("==========================================")
 print("  Deployment Summary")
 print("==========================================")
-print(f"  Agents:   {', '.join(agents)}")
+print(f"  Agents:   {', '.join(ALL_AGENTS)}")
 print(f"  Account:  {account_id}")
 print(f"  Region:   {region}")
 print()
-print("All agents deployed successfully.")
+print("Gateway and all five standalone agents deployed successfully.")

@@ -50,12 +50,58 @@ def test_possession_side_is_per_team():
     print("=== SIDES: MY for home, OPP for away ===")
 
 
+def test_possession_team_disambiguates_both_player_formats():
+    new_players = copy.deepcopy(_players())
+    for player in new_players:
+        player.pop("teamId", None)
+        player.pop("playerId", None)
+
+    by_agent_id = _ball(
+        possessionAgentId="agentId_0",
+        possessionTeamCode="AWAY",
+    )
+    assert holder_is_me(by_agent_id, new_players, AWAY, 0)
+    assert not holder_is_me(by_agent_id, new_players, HOME, 0)
+
+    by_player_id_with_agent_players = _ball(
+        possessionAgentId=None,
+        possessionPlayerId=0,
+        possessionTeamId=1,
+    )
+    assert holder_is_me(by_player_id_with_agent_players, new_players, AWAY, 0)
+    assert not holder_is_me(by_player_id_with_agent_players, new_players, HOME, 0)
+
+    old_players = copy.deepcopy(_players())
+    for player in old_players:
+        player["playerId"] = int(player.pop("agentId").rsplit("_", 1)[-1])
+        player.pop("teamId", None)
+    by_player_id = _ball(
+        possessionAgentId=None,
+        possessionPlayerId=0,
+        possessionTeamId=1,
+    )
+    assert holder_is_me(by_player_id, old_players, AWAY, 0)
+    assert not holder_is_me(by_player_id, old_players, HOME, 0)
+    print("=== TEAM DISAMBIGUATOR: agentId/teamCode and playerId/teamCode ===")
+
+
 def test_rendered_prompt_is_not_self_contradictory():
     """The away forward used to read 'held by OPP player 3' and hasBall=True."""
     out = summarize_state(GAME_STATE, AWAY, HOLDER_IDX, "FWD1")
     assert "held by OPP player 3" in out
     assert "hasBall=False" in out, out
     print("=== PROMPT: away p3 told opponent holds it, and hasBall=False ===")
+
+
+def test_prompt_includes_match_clock_score_and_player_context():
+    out = summarize_state(GAME_STATE, HOME, 1, "DEF")
+    assert "Time: 2:00 (120s elapsed)" in out
+    assert "Score: HOME 1 - 0 AWAY" in out
+    assert "Ball: pos=(15.3, -5.2) vel=(0.0, 0.0) held by MY player 3" in out
+    assert "lastAction=CoachMoveTo" in out
+    assert "P3: pos=(30.0,-12.0)" in out
+    assert "threat=" in out
+    print("=== PROMPT: clock, score, ball, and full player context present ===")
 
 
 def test_server_isfree_is_honoured():

@@ -14,18 +14,19 @@ set -e
 #   2. Copies the agent's src/ + shared lib/ + requirements.txt into it
 #   3. Generates .bedrock_agentcore.yaml from the agent's template
 #   4. Deploys from the staging directory
-#   5. Cleans up _build/ when done
+#   5. Injects the tactical-tools URL into ai_def_agent
+#   6. Cleans up the temporary staging directory
 #
 # This avoids copying lib/ into each agent's source tree. You only ever
 # edit lib/ in one place.
 #
 # Prerequisites:
-#   pip install bedrock-agentcore-starter-toolkit
+#   uv and bedrock-agentcore-starter-toolkit (run through uv)
 #   aws configure (or set AWS_PROFILE)
 # ============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-BUILD_DIR="$SCRIPT_DIR/_build"
+BUILD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ai-team-agentcore.XXXXXX")"
 
 AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-us-east-1}"
 export AWS_DEFAULT_REGION
@@ -47,12 +48,11 @@ echo ""
 # ------ Pre-flight ------
 echo "Checking prerequisites..."
 
-if ! command -v agentcore &> /dev/null; then
-  echo "ERROR: 'agentcore' CLI not found."
-  echo "Install: pip install bedrock-agentcore-starter-toolkit"
+if ! command -v uv &> /dev/null; then
+  echo "ERROR: 'uv' not found (required to run the standalone AgentCore toolkit)."
   exit 1
 fi
-echo "  agentcore CLI: OK"
+echo "  uv: OK"
 
 if ! command -v rsync &> /dev/null; then
   echo "ERROR: 'rsync' not found (needed to copy lib without __pycache__)."
@@ -74,6 +74,21 @@ export AWS_ACCOUNT_ID
 echo "  AWS Account: $AWS_ACCOUNT_ID"
 echo "  AWS Region:  $AWS_DEFAULT_REGION"
 echo ""
+
+GATEWAY_URL=""
+for agent in "${AGENTS[@]}"; do
+  if [[ "$agent" == "ai-def" ]]; then
+    GATEWAY_URL=$(aws cloudformation describe-stacks \
+      --stack-name AgentCore-TeamStrandsBalanced-default \
+      --query "Stacks[0].Outputs[?OutputKey=='GatewayTacticalToolsUrlOutput'].OutputValue | [0]" \
+      --output text)
+    if [[ -z "$GATEWAY_URL" || "$GATEWAY_URL" == "None" ]]; then
+      echo "ERROR: tactical-tools gateway URL not found; deploy the gateway first."
+      exit 1
+    fi
+    break
+  fi
+done
 
 # ------ Cleanup on exit ------
 cleanup() {
@@ -124,7 +139,24 @@ for agent in "${AGENTS[@]}"; do
 
   # Deploy from staging directory
   echo "  Deploying from: $STAGE"
-  if (cd "$STAGE" && agentcore deploy --auto-update-on-conflict); then
+  if [[ "$agent" == "ai-def" ]]; then
+    if (
+      cd "$STAGE" &&
+      uv run --python 3.12 --with bedrock-agentcore-starter-toolkit \
+        agentcore deploy --auto-update-on-conflict \
+        --env "AGENTCORE_GATEWAY_TACTICAL_TOOLS_URL=$GATEWAY_URL"
+    ); then
+      echo "  ✅ $agent: DEPLOYED with tactical-tools gateway"
+      DEPLOYED+=("$agent")
+    else
+      echo "  ❌ $agent: FAILED"
+      FAILED+=("$agent")
+    fi
+  elif (
+    cd "$STAGE" &&
+    uv run --python 3.12 --with bedrock-agentcore-starter-toolkit \
+      agentcore deploy --auto-update-on-conflict
+  ); then
     echo "  ✅ $agent: DEPLOYED"
     DEPLOYED+=("$agent")
   else

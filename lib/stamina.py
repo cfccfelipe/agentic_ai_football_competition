@@ -16,6 +16,7 @@ dropped verbatim into the state summary without extra formatting.
 
 from __future__ import annotations
 from dataclasses import dataclass
+import math
 
 
 # Assumed match half duration in seconds.  The server does not expose this
@@ -37,6 +38,22 @@ class StaminaCtx:
     advice: str             # short text injected into the LLM prompt
     sprint_ok: bool         # whether sprinting is advisable
     press_intensity: float  # 0.3 – 0.85 scaled to current stamina
+    input_warning: str | None = None
+
+
+UNKNOWN_STAMINA = 0.20
+
+
+def normalize_stamina(value) -> tuple[float, str | None]:
+    """Normalize fractional or percentage stamina; unknown values are conservative."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        stamina = float(value)
+        if math.isfinite(stamina):
+            if 0.0 <= stamina <= 1.0:
+                return stamina, None
+            if 1.0 < stamina <= 100.0:
+                return stamina / 100.0, "stamina was supplied as a percentage"
+    return UNKNOWN_STAMINA, "stamina is missing or invalid; using a conservative value"
 
 
 # ---------------------------------------------------------------------------
@@ -44,7 +61,7 @@ class StaminaCtx:
 # ---------------------------------------------------------------------------
 
 def stamina_context(
-    stamina: float,
+    stamina,
     game_time: float,
     half_duration: float = DEFAULT_HALF_DURATION,
 ) -> StaminaCtx:
@@ -56,6 +73,8 @@ def stamina_context(
     game_time     : float   Seconds elapsed this half.
     half_duration : float   Expected length of the half in seconds.
     """
+    stamina, input_warning = normalize_stamina(stamina)
+
     # Expected stamina drains linearly from 1.0 at kick-off to ~0.5 by the
     # end of the half — a reasonable model for 5v5 arcade soccer.
     progress     = min(1.0, game_time / max(1.0, half_duration))
@@ -72,6 +91,7 @@ def stamina_context(
         advice         = advice,
         sprint_ok      = ok,
         press_intensity= round(intensity, 2),
+        input_warning  = input_warning,
     )
 
 
@@ -93,7 +113,8 @@ def format_for_prompt(ctx: StaminaCtx) -> str:
     Example output:
       [TIRED — conserve energy, avoid unnecessary sprints]
     """
-    return f"[{ctx.label} — {ctx.advice}]"
+    warning = f"; {ctx.input_warning}" if ctx.input_warning else ""
+    return f"[{ctx.label} — {ctx.advice}{warning}]"
 
 
 # ---------------------------------------------------------------------------

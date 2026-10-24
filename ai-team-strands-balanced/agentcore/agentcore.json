@@ -7,58 +7,128 @@
     "agentcore:created-by": "agentcore-cli",
     "agentcore:project-name": "TeamStrandsBalanced"
   },
-  "runtimes": [
-    {
-      "name": "ai_gk_agent",
-      "build": "CodeZip",
-      "entrypoint": "src/main.py",
-      "codeLocation": "ai-gk/",
-      "runtimeVersion": "PYTHON_3_12",
-      "networkMode": "PUBLIC",
-      "protocol": "HTTP"
-    },
-    {
-      "name": "ai_def_agent",
-      "build": "CodeZip",
-      "entrypoint": "src/main.py",
-      "codeLocation": "ai-def/",
-      "runtimeVersion": "PYTHON_3_12",
-      "networkMode": "PUBLIC",
-      "protocol": "HTTP"
-    },
-    {
-      "name": "ai_mid_agent",
-      "build": "CodeZip",
-      "entrypoint": "src/main.py",
-      "codeLocation": "ai-mid/",
-      "runtimeVersion": "PYTHON_3_12",
-      "networkMode": "PUBLIC",
-      "protocol": "HTTP"
-    },
-    {
-      "name": "ai_fwd1_agent",
-      "build": "CodeZip",
-      "entrypoint": "src/main.py",
-      "codeLocation": "ai-fwd1/",
-      "runtimeVersion": "PYTHON_3_12",
-      "networkMode": "PUBLIC",
-      "protocol": "HTTP"
-    },
-    {
-      "name": "ai_fwd2_agent",
-      "build": "CodeZip",
-      "entrypoint": "src/main.py",
-      "codeLocation": "ai-fwd2/",
-      "runtimeVersion": "PYTHON_3_12",
-      "networkMode": "PUBLIC",
-      "protocol": "HTTP"
-    }
-  ],
+  "runtimes": [],
   "memories": [],
   "knowledgeBases": [],
   "credentials": [],
-  "evaluators": [],
-  "onlineEvalConfigs": [],
+  "evaluators": [
+    {
+      "name": "mid_role_discipline",
+      "level": "SESSION",
+      "description": "Evalúa si el MID cumple su rol central y adapta su acción a la fase y al estado del partido.",
+      "config": {
+        "llmAsAJudge": {
+          "model": "us.amazon.nova-lite-v1:0",
+          "instructions": "Evalúa la sesión completa del jugador MID (player 2) en un partido de fútbol 5v5. Contexto y trazas de la sesión: {context}. Usa la evidencia visible, no supongas datos ausentes. Evalúa si el MID ofrece apoyo central entre defensa y ataque, se repliega al perder posesión, evita perseguir el balón cuando un compañero debe presionar, y adapta sus acciones a la fase, posesión, presión, marcador y stamina. No penalices una acción de movimiento si tiene un destino táctico claro. Penaliza repetir movimientos sin progreso, presionar sin ser el compañero indicado, abandonar el centro sin una razón táctica, o actuar contra las instrucciones explícitas del estado.",
+          "ratingScale": {
+            "numerical": [
+              {"value": 0, "label": "Fallido", "definition": "Ignora el rol MID o repite acciones claramente contrarias al estado durante gran parte de la sesión."},
+              {"value": 1, "label": "Débil", "definition": "Muestra problemas tácticos repetidos, con pocas decisiones justificadas por el estado."},
+              {"value": 2, "label": "Mixto", "definition": "Cumple algunas responsabilidades, pero alterna con errores notables de posicionamiento o fase."},
+              {"value": 3, "label": "Bueno", "definition": "Cumple normalmente el rol, mantiene apoyo central y responde a la mayoría de los cambios de fase."},
+              {"value": 4, "label": "Excelente", "definition": "Mantiene disciplina central, coordina presión y repliegue, y cada salida de zona tiene una razón táctica visible."}
+            ]
+          }
+        }
+      },
+      "tags": {"team": "football", "position": "mid"}
+    },
+    {
+      "name": "midfield_progression",
+      "level": "SESSION",
+      "description": "Evalúa la progresión segura del MID y el uso de pases o tiros frente a movimientos improductivos.",
+      "config": {
+        "llmAsAJudge": {
+          "model": "us.amazon.nova-lite-v1:0",
+          "instructions": "Evalúa las decisiones del jugador MID (player 2) a lo largo de la sesión. Contexto y trazas de la sesión: {context}. Usa solo la evidencia disponible. Cuando tiene posesión, valora pases seguros hacia delante a FWD, tiros claros dentro de rango y pases de seguridad solo cuando la presión o la falta de opciones los justifican. No exijas un tiro si el jugador no tiene el balón o el ángulo no es razonable. Cuando no tiene posesión, valora que cree una línea de pase útil y distinta, y no se quede en MOVE_TO repetidos sin progreso. Revisa las acciones PRESS_BALL/INTERCEPT frente a posesión confirmada, ubicación del balón y presión más cercana; no premies presión repetitiva ni comandos que no alteran el juego (por ejemplo, RESET) sin evidencia de que fueran necesarios. Un pase atrás al GK no es automáticamente malo si el estado muestra que es la única salida segura. Distingue las decisiones del MID de las de sus compañeros y no atribuyas los conteos agregados del equipo al MID.",
+          "ratingScale": {
+            "numerical": [
+              {"value": 0, "label": "Sin progresión", "definition": "Desperdicia repetidamente posesiones o movimientos y omite opciones claras de pase o tiro."},
+              {"value": 1, "label": "Pobre", "definition": "Predominan movimientos improductivos o decisiones de posesión que frenan ataques sin necesidad."},
+              {"value": 2, "label": "Irregular", "definition": "Hay algunas progresiones útiles, pero también oportunidades claras desaprovechadas."},
+              {"value": 3, "label": "Eficaz", "definition": "Normalmente progresa con seguridad, pasa o dispara cuando el estado lo justifica y ofrece apoyo útil."},
+              {"value": 4, "label": "Muy eficaz", "definition": "Convierte oportunidades claras en progresión o tiros razonables y evita pérdidas y acciones sin propósito."}
+            ]
+          }
+        }
+      },
+      "tags": {"team": "football", "position": "mid"}
+    },
+    {
+      "name": "shape_5v5_feasibility",
+      "level": "SESSION",
+      "description": "Evalúa disciplina de estructura sin proponer roles que excedan los cinco jugadores disponibles.",
+      "config": {
+        "llmAsAJudge": {
+          "model": "us.amazon.nova-lite-v1:0",
+          "instructions": "Evalúa si la estructura observada es viable para el equipo de este runtime. Contexto y trazas de la sesión: {context}. Hay cinco jugadores totales, IDs 0-4; GK es 0, DEF es 1, MID es 2 y FWD1/FWD2 son 3 y 4. La distribución actual es 1 GK + 1 DEF + 1 MID + 2 FWD. La propuesta 1-2-1-2 suma seis jugadores si incluye al GK, y más de seis si se expresa solo con jugadores de campo: no es una formación válida para este partido de 5v5. No afirmes que la formación cambió a menos que los traces demuestren cambios de rol. Evalúa si el MID preserva separación y apoyo central respecto a DEF y FWD, si evita amontonarse con compañeros, y si cualquier avance corresponde a la fase e instrucciones tácticas. Si los traces no contienen posiciones o suficientes decisiones para juzgar la estructura, dilo y usa una puntuación intermedia en vez de inventar evidencia.",
+          "ratingScale": {
+            "numerical": [
+              {"value": 0, "label": "Inválida", "definition": "La estrategia asumida exige más de cinco jugadores o contradice roles/IDs fijos de forma reiterada."},
+              {"value": 1, "label": "Desordenada", "definition": "La estructura disponible se rompe repetidamente, con solapamientos o abandono central sin razón."},
+              {"value": 2, "label": "Parcial", "definition": "La estructura es posible, pero hay solapamientos o falta de información para demostrar disciplina consistente."},
+              {"value": 3, "label": "Ordenada", "definition": "Respeta los cinco puestos y generalmente conserva separación funcional y apoyo central."},
+              {"value": 4, "label": "Sólida", "definition": "Usa los cinco puestos de forma coherente, conserva carriles complementarios y adapta la forma sin exceder el plantel."}
+            ]
+          }
+        }
+      },
+      "tags": {"team": "football", "scope": "formation"}
+    },
+    {
+      "name": "gk_safe_distribution",
+      "level": "SESSION",
+      "description": "Evalúa si el arquero distribuye únicamente a receptores libres y espera bajo presión.",
+      "config": {
+        "llmAsAJudge": {
+          "model": "us.amazon.nova-lite-v1:0",
+          "instructions": "Evalúa solo las decisiones del arquero (player 0). Contexto y trazas de la sesión: {context}. El GK nunca debe distribuir al DEF (player 1). Cuando la distribución es segura, debe preferir FWD1/FWD2 (players 3/4) y usar MID (player 2) como siguiente opción. Un receptor solo está libre si no hay oponente a 8 unidades o menos; además, si un rival está a 8 unidades o menos del arquero, debe esperar en su posición con MOVE_TO sin sprint y conservar la posesión, en vez de forzar la distribución. También debe esperar si todos los delanteros y el MID están marcados. No penalices la espera cuando los traces muestran presión; penaliza distribuir al DEF, hacia un receptor marcado, o forzar pases mientras el arquero está bajo presión. Usa solo posiciones/amenazas presentes en los traces; si faltan datos para confirmar distancia, indícalo y no inventes.",
+          "ratingScale": {
+            "numerical": [
+              {"value": 0, "label": "Inseguro", "definition": "Pasa repetidamente al DEF, a receptores marcados o distribuye bajo presión cercana."},
+              {"value": 1, "label": "Débil", "definition": "Muestra varios errores de selección de receptor o no espera cuando el GK está claramente presionado."},
+              {"value": 2, "label": "Mixto", "definition": "Combina distribuciones apropiadas con errores, o hay evidencia insuficiente para confirmar la seguridad de varios pases."},
+              {"value": 3, "label": "Seguro", "definition": "Normalmente elige FWD/MID libres y conserva el balón cuando la presión obliga a esperar."},
+              {"value": 4, "label": "Excelente", "definition": "Sigue de forma consistente la prioridad FWD luego MID, evita al DEF y espera siempre que el GK o sus receptores no estén libres."}
+            ]
+          }
+        }
+      },
+      "tags": {"team": "football", "position": "gk"}
+    }
+  ],
+  "onlineEvalConfigs": [
+    {
+      "name": "mid_match_quality",
+      "logGroupNames": [
+        "/aws/bedrock-agentcore/runtimes/ai_mid_agent-91NQfQ3H5X-DEFAULT"
+      ],
+      "serviceNames": ["ai_mid_agent.DEFAULT"],
+      "evaluators": [
+        "mid_role_discipline",
+        "midfield_progression",
+        "shape_5v5_feasibility"
+      ],
+      "samplingRate": 5,
+      "sessionTimeoutMinutes": 5,
+      "enableOnCreate": true,
+      "description": "Evalúa sesiones del MID en vivo con métricas de rol, progresión y viabilidad 5v5.",
+      "tags": {"team": "football", "position": "mid"}
+    },
+    {
+      "name": "gk_match_quality",
+      "logGroupNames": [
+        "/aws/bedrock-agentcore/runtimes/ai_gk_agent-MPug56HQgi-DEFAULT"
+      ],
+      "serviceNames": ["ai_gk_agent.DEFAULT"],
+      "evaluators": ["gk_safe_distribution"],
+      "samplingRate": 5,
+      "sessionTimeoutMinutes": 5,
+      "enableOnCreate": true,
+      "description": "Evalúa sesiones del GK en vivo: destinatario, presión y conservación segura de posesión.",
+      "tags": {"team": "football", "position": "gk"}
+    }
+  ],
   "agentCoreGateways": [
     {
       "name": "tactical-tools",
@@ -72,7 +142,7 @@
           "toolDefinitions": [
             {
               "name": "calculate_pass_options",
-              "description": "Rank teammate passing options by distance and interception risk.",
+              "description": "Rank passes by safety and forward progress; prefer safe forward outfield passes over returning the ball to the goalkeeper.",
               "inputSchema": {
                 "type": "object",
                 "properties": {
